@@ -26,7 +26,8 @@ from ta.trend import MACD
 from ta.volatility import BollingerBands
 import numpy as np
 from scipy.signal import argrelextrema
-import stripe
+import logging
+import json
 
 # .env dosyasının yolunu bul
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -49,34 +50,43 @@ if not token:
 
 class TelegramBot:
     def __init__(self, token: str):
-        """Bot başlatma"""
-        self.token = token
+        """Initialize the bot with API keys and configuration"""
+        # Initialize logger
+        self.logger = logging.getLogger('CoinScanner')
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Add handlers if they don't exist
+        if not self.logger.handlers:
+            fh = logging.FileHandler('coin_scanner_debug.log')
+            fh.setLevel(logging.DEBUG)
+            ch = logging.StreamHandler()
+            ch.setLevel(logging.DEBUG)
+            
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            fh.setFormatter(formatter)
+            ch.setFormatter(formatter)
+            
+            self.logger.addHandler(fh)
+            self.logger.addHandler(ch)
+        
+        # Initialize bot
         self.application = Application.builder().token(token).build()
-        self.bot = self.application.bot  # Bot referansını doğru şekilde al
-        self.market_scanner = MarketScanner()
+        self.is_scanning = False
+        self.scan_active = False  # Bu satırı ekledik
         
-        # Tarama ve takip durumları
-        self.scan_active = False
-        self.track_active = False
+        # Takip sistemi için değişkenler
+        self.tracked_coins = {}  # {chat_id: {symbol: {data}}}
+        self.track_tasks = {}   # {chat_id: {symbol: task}}
+        self.last_opportunities = []  # Son tarama sonuçları
         
-        # Görev yönetimi
-        self.scan_task = None
-        self.track_task = None
-        self.watch_tasks = {}
-        self.monitoring_task = None
-        
-        # Veri takibi
-        self.last_scan_time = None
-        self.tracked_prices = {}
-        self.tracked_symbols = set()
-        self.user_chat_ids = set()
-        
-        # Komutları ekle
+        # Command handlers - alt çizgisiz metodlara referans ver
         self.application.add_handler(CommandHandler("start", self.start_command))
-        self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("scan", self.scan_command))
+        self.application.add_handler(CommandHandler("stop", self.stop_command))
+        self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("track", self.track_command))
-        self.application.add_handler(MessageHandler(filters.COMMAND & filters.Regex(r"^/analyze_"), self.analyze_command))
+        self.application.add_handler(CommandHandler("untrack", self.untrack_command))
+        self.application.add_handler(CommandHandler("list", self.list_tracked_command))
         
         # Initialize analyzers
         self.signal_analyzer = SignalAnalyzer()
@@ -110,23 +120,14 @@ class TelegramBot:
             'investing': 'https://tr.investing.com/search/?q={}&tab=news'
         }
         
-        # Ödeme sistemi ayarları
-        self.stripe = stripe
-        self.stripe.api_key = "your_stripe_secret_key"
-        
-        # Kullanıcı veritabanı (gerçek uygulamada bir DB kullanılmalı)
-        self.users: Dict[int, Dict] = {}
-        
-        # Premium özellik fiyatları
-        self.PREMIUM_PRICE = 500  # USD
-        self.TRIAL_DAYS = 3
-        
     def _setup_handlers(self):
         """Telegram komut işleyicilerini ayarla"""
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("scan", self.scan_command))
         self.application.add_handler(CommandHandler("track", self.track_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
+        self.application.add_handler(CommandHandler("untrack", self.untrack_command))
+        self.application.add_handler(CommandHandler("list", self.list_tracked_command))
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
         
         # Text handler'ı en sona ekleyin
@@ -138,189 +139,66 @@ class TelegramBot:
         )
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Yardım mesajını gönder"""
-        help_text = """🤖 Kripto Sinyal Botu - Komutlar
+        """Bot komutları hakkında bilgi ver"""
+        help_text = """🤖 Coin Scanner Bot - Komutlar
 
-/scan - Piyasa taraması başlat/durdur
-/track - Tüm coinleri takip et/durdur
-/analyze_BTCUSDT - BTC analizi (diğer coinler için de kullanılabilir)
-/help - Bu mesajı göster
+📊 TEMEL KOMUTLAR:
+/start - Botu başlat
+/help - Bu yardım mesajını göster
+/scan - Fırsat taraması başlat
+/stop - Aktif taramayı durdur
 
-ℹ️ Özellikler:
-• Otomatik piyasa taraması
-• Tüm coinleri takip
-• Anlık fiyat bildirimleri
-• Detaylı teknik analiz
-• Alım/satım sinyalleri"""
+📈 TAKİP KOMUTLARI:
+/track <numara> - Listedeki coini takibe al
+Örnek: /track 1 (listedeki 1 numaralı coini takip et)
+
+/untrack <sembol> - Coini takipten çıkar
+Örnek: /untrack BTCUSDT
+
+/list - Takip edilen coinleri listele
+
+⚡️ KULLANIM:
+1. /scan komutu ile fırsat taraması başlat
+2. Listeden beğendiğin coinin numarasını seç
+3. /track <numara> komutu ile takibe al
+4. /list ile takip ettiğin coinleri kontrol et
+5. /untrack ile takibi sonlandır
+
+❗️ ÖNEMLİ: Önce /scan komutu ile tarama yapın, sonra listeden coin seçip /track komutu ile takibe alın."""
 
         await update.message.reply_text(help_text)
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Kullanıcı başlangıç komutu"""
-        try:
-            user_id = update.effective_user.id
-            chat_id = update.effective_chat.id
-            
-            # Yeni kullanıcı kontrolü
-            if user_id not in self.users:
-                trial_end = datetime.now() + timedelta(days=self.TRIAL_DAYS)
-                self.users[user_id] = {
-                    'trial_end': trial_end,
-                    'is_premium': False,
-                    'subscription_end': None,
-                    'chat_id': chat_id
-                }
-                
-                await update.message.reply_text(
-                    f"""🎉 Hoş Geldiniz!
-
-🎯 Size özel 3 günlük ÜCRETSİZ VIP deneme başlatıldı!
-
-✨ Premium Özellikler:
-• Anlık kripto sinyalleri
-• Detaylı piyasa analizleri
-• VIP destek grubu erişimi
-• Özel portföy önerileri
-• Haftalık strateji raporları
-• Risk yönetimi tavsiyeleri
-
-💎 Premium Üyelik: $500/ay
-
-⏰ Deneme Süreniz: {trial_end.strftime('%d/%m/%Y %H:%M')} tarihine kadar
-
-📌 Ödeme Seçenekleri:
-• Kredi Kartı
-• USDT/USDC
-
-/premium → Premium üyelik bilgileri
-/help → Tüm komutlar""")
-            else:
-                await self._check_and_notify_subscription(user_id)
+        """Başlangıç mesajını göster"""
+        # Kullanıcının chat ID'sini kaydet
+        user_chat_id = update.effective_chat.id
+        self.user_chat_ids.add(user_chat_id)
         
-        except Exception as e:
-            print(f"Start komut hatası: {str(e)}")
+        welcome_text = """🚀 Kripto Sinyal Botuna Hoş Geldiniz!
 
-    async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Premium üyelik bilgileri ve ödeme"""
-        try:
-            user_id = update.effective_user.id
-            user = self.users.get(user_id)
-            
-            if not user:
-                await update.message.reply_text("❌ Lütfen önce /start komutunu kullanın!")
-                return
-            
-            if user.get('is_premium'):
-                sub_end = user.get('subscription_end')
-                await update.message.reply_text(
-                    f"""✨ Premium Üyeliğiniz Aktif!
+Bu bot size:
+• Otomatik piyasa taraması
+• Coin bazlı takip sistemi
+• 15 dakikalık al-sat sinyalleri
+• Teknik analiz
+• Haber takibi
+sunar.
 
-⏰ Bitiş Tarihi: {sub_end.strftime('%d/%m/%Y %H:%M')}
+Kullanım:
+1. Coin takibi için:
+   • /track BTC yazın
+   • veya direkt BTC yazın
+   
+2. Piyasa taraması için:
+   • /scan yazın
+   
+3. Yardım için:
+   • /help yazın
 
-/extend → Üyelik uzatma
-/cancel → İptal""")
-                return
-            
-            # Ödeme bağlantısı oluştur
-            payment_link = await self._create_payment_link(user_id)
-            
-            await update.message.reply_text(
-                f"""💎 Premium Üyelik
+⚠️ Not: Tüm sinyaller bilgilendirme amaçlıdır.
+Yatırım tavsiyesi değildir."""
 
-💰 Aylık Ücret: $500
-
-✨ Premium Özellikleri:
-• Anlık kripto sinyalleri
-• Detaylı piyasa analizleri
-• VIP destek grubu erişimi
-• Özel portföy önerileri
-• Haftalık strateji raporları
-• Risk yönetimi tavsiyeleri
-
-🎁 Özel Teklifler:
-• İlk ay %20 indirim
-• Yıllık ödemede 2 ay hediye
-• Referans programı
-
-💳 Ödeme için: {payment_link}""")
-        
-        except Exception as e:
-            print(f"Premium komut hatası: {str(e)}")
-
-    async def _check_and_notify_subscription(self, user_id: int):
-        """Üyelik durumu kontrolü ve bildirimleri"""
-        try:
-            user = self.users.get(user_id)
-            if not user:
-                return
-            
-            now = datetime.now()
-            
-            # Deneme süresi kontrolü
-            if not user.get('is_premium'):
-                trial_end = user.get('trial_end')
-                if trial_end:
-                    if now > trial_end:
-                        # Deneme süresi bitmiş
-                        await self.application.bot.send_message(
-                            chat_id=user['chat_id'],
-                            text="""⚠️ Deneme Süreniz Sona Erdi!
-
-💎 Premium özelliklere erişim için üyelik almanız gerekiyor.
-
-/premium → Üyelik bilgileri""")
-                        return False
-                    
-                    # Son 24 saat ve 6 saat uyarıları
-                    hours_left = (trial_end - now).total_seconds() / 3600
-                    if 23 < hours_left < 24:
-                        await self.application.bot.send_message(
-                            chat_id=user['chat_id'],
-                            text="""⚠️ Deneme Süreniz Yarın Sona Eriyor!
-
-🎯 Premium üyelik avantajlarından yararlanmaya devam etmek için:
-/premium""")
-                    elif 5 < hours_left < 6:
-                        await self.application.bot.send_message(
-                            chat_id=user['chat_id'],
-                            text="""🚨 Son 6 Saat!
-
-⏰ Deneme süreniz yakında sona erecek.
-/premium → Hemen üye olun""")
-            
-            return True
-            
-        except Exception as e:
-            print(f"Üyelik kontrol hatası: {str(e)}")
-            return False
-
-    async def _create_payment_link(self, user_id: int) -> str:
-        """Ödeme bağlantısı oluştur"""
-        try:
-            # Stripe ödeme bağlantısı (örnek)
-            session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[{
-                    'price_data': {
-                        'currency': 'usd',
-                        'unit_amount': 50000,  # $500.00
-                        'product_data': {
-                            'name': 'Premium Bot Üyeliği',
-                            'description': 'Aylık Premium Üyelik'
-                        },
-                    },
-                    'quantity': 1,
-                }],
-                mode='subscription',
-                success_url='https://t.me/your_bot?start=success',
-                cancel_url='https://t.me/your_bot?start=cancel',
-                client_reference_id=str(user_id)
-            )
-            return session.url
-            
-        except Exception as e:
-            print(f"Ödeme bağlantısı hatası: {str(e)}")
-            return "Ödeme sistemi geçici olarak kullanılamıyor."
+        await update.message.reply_text(welcome_text)
 
     async def broadcast_signal(self, message: str, symbol: str = None):
         """Tüm aktif kullanıcılara sinyal gönder"""
@@ -466,124 +344,311 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Hata: {str(e)}")
 
     async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Piyasa taraması başlat/durdur"""
+        """Fırsat taraması başlat"""
         try:
             chat_id = update.effective_chat.id
-            self.user_chat_ids.add(chat_id)
             
-            if not self.scan_active:
-                self.scan_active = True
-                
-                await update.message.reply_text(
-                    "🔍 Binance taraması başladı!\n"
-                    "Fırsat görülen coinler için bildirim alacaksınız.\n"
-                    "Durdurmak için tekrar /scan yazın."
-                )
-                
-                self.scan_task = asyncio.create_task(self._scan_market(chat_id))
-                
-            else:
+            if self.scan_active:
+                await update.message.reply_text("⚠️ Tarama zaten aktif!")
+                return
+            
+            await update.message.reply_text("🔍 Fırsat taraması başlatılıyor...")
+            self.scan_active = True
+            
+            opportunities = await self._get_market_data()
+            
+            if not opportunities or len(opportunities) == 0:
+                await update.message.reply_text("❌ Fırsat bulunamadı!")
                 self.scan_active = False
-                if self.scan_task:
-                    self.scan_task.cancel()
-                await update.message.reply_text("🛑 Piyasa taraması durduruldu!")
+                return
+            
+            self.last_opportunities = opportunities
+            
+            message = "🎯 KRİPTO FIRSATLARI\n\n"
+            
+            for i, opp in enumerate(opportunities, 1):
+                message += f"#{i} {opp['signal']} {opp['symbol']}\n"
+                message += f"━━━━━━━━━━━━━━━━━━━━━\n"
+                message += f"💰 Fiyat: ${opp['price']:.4f}\n"
+                message += f"📊 24s Değişim: %{opp['change_24h']:.2f}\n"
+                message += f"📈 24s Hacim: ${opp['volume']:,.0f}\n"
+                message += f"📊 Hacim Profili: {opp['volume_profile']}\n"
+                message += f"⚡ Volatilite: %{opp['volatility']:.2f}\n"
                 
+                message += f"\n🎯 GİRİŞ SEVİYELERİ:\n"
+                message += f"• Güçlü Alış: ${opp['entry_levels']['strong_buy']:.4f}\n"
+                message += f"• Alış: ${opp['entry_levels']['buy']:.4f}\n"
+                message += f"• Nötr: ${opp['entry_levels']['neutral']:.4f}\n"
+                
+                message += f"\n🛑 STOP-LOSS:\n"
+                message += f"• Sıkı: ${opp['stop_loss']['tight']:.4f}\n"
+                message += f"• Normal: ${opp['stop_loss']['normal']:.4f}\n"
+                message += f"• Geniş: ${opp['stop_loss']['wide']:.4f}\n"
+                
+                message += f"\n💎 HEDEF FİYATLAR:\n"
+                message += f"• Muhafazakar: ${opp['take_profit']['conservative']:.4f}\n"
+                message += f"• Orta: ${opp['take_profit']['moderate']:.4f}\n"
+                message += f"• Agresif: ${opp['take_profit']['aggressive']:.4f}\n"
+                
+                message += f"\n📊 ANALİZ:\n"
+                message += f"• Risk Seviyesi: {'🔴' * opp['risk_level']}\n"
+                message += f"• Trend Gücü: {'⭐' * opp['trend_strength']}\n"
+                message += f"• Fırsat Puanı: {opp['opportunity_score']:.1f}/100\n"
+                message += "\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+                
+                # Her 3 coin'den sonra mesajı gönder ve yeni mesaj başlat
+                if i % 3 == 0:
+                    await update.message.reply_text(message)
+                    message = "🎯 KRİPTO FIRSATLARI (devam)\n\n"
+            
+            # Kalan mesajı gönder
+            if message != "🎯 KRİPTO FIRSATLARI (devam)\n\n":
+                await update.message.reply_text(message)
+            
+            await update.message.reply_text(
+                "📝 Coin takibi için:\n"
+                "/track <numara> yazın\n\n"
+                "Örnek: /track 1"
+            )
+            
+            self.scan_active = False
+            
         except Exception as e:
+            self.scan_active = False
             await update.message.reply_text(f"❌ Tarama hatası: {str(e)}")
 
     async def _scan_market(self, chat_id: int):
-        """Binance'deki tüm coinleri tara ve fırsatları bul"""
+        """Piyasa taraması ve en iyi 10 fırsatı analiz et"""
         try:
-            while self.scan_active:
+            await self._log("🔍 Piyasa taraması başlatılıyor...", "info", True, chat_id)
+            
+            # Piyasa verilerini çek
+            market_data = await self._get_market_data()
+            if not market_data:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ Piyasa verileri alınamadı!"
+                )
+                return
+
+            # Debug mesajı
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=f"📊 Toplam {len(market_data)} USDT çifti taranıyor..."
+            )
+
+            opportunities = []
+            min_volume = 100000  # 100K USDT'ye düşürüldü
+            min_price_change = 0.1  # %0.1'e düşürüldü
+
+            processed_pairs = 0
+            found_opportunities = 0
+
+            for symbol, data in market_data.items():
                 try:
-                    current_time = time.time()
-                    if (self.last_scan_time and 
-                        current_time - self.last_scan_time < 300):  # 5 dakika
-                        await asyncio.sleep(1)
-                        continue
-
-                    all_symbols = await self.market_scanner.get_all_symbols()
-                    if not all_symbols:
-                        print("⚠️ Sembol listesi boş, tekrar deneniyor...")
-                        await asyncio.sleep(5)
-                        continue
-
-                    total_symbols = len(all_symbols)
-                    scanned_count = 0
-                    opportunities = []
-
-                    print(f"\n🔍 Toplam {total_symbols} coin taranıyor...")
-
-                    # Her 10 coini paralel tara
-                    for i in range(0, total_symbols, 10):
-                        batch = all_symbols[i:i+10]
-                        tasks = []
+                    processed_pairs += 1
+                    
+                    # Veri dönüşümü
+                    volume = float(data['quoteVolume'])
+                    price_change = float(data.get('priceChangePercent', 0))
+                    current_price = float(data['lastPrice'])
+                    high = float(data['highPrice'])
+                    low = float(data['lowPrice'])
+                    
+                    # Minimum hacim kontrolü
+                    if volume >= min_volume:
+                        # Debug log
+                        await self._log(
+                            f"Fırsat: {symbol} - Hacim: ${volume:,.0f} - Değişim: %{price_change:.2f}",
+                            "debug"
+                        )
                         
-                        for symbol in batch:
-                            tasks.append(self._scan_single_coin(symbol))
+                        # Volatilite hesaplama
+                        volatility = ((high - low) / low * 100) if low > 0 else 0
                         
-                        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                        # Momentum hesaplama
+                        price_momentum = ((current_price - low) / low * 100) if low > 0 else 0
                         
-                        for result in batch_results:
-                            if isinstance(result, dict) and result.get('signal'):
-                                opportunities.append(result)
+                        # Hacim momentum
+                        volume_momentum = volume / min_volume
                         
-                        scanned_count += len(batch)
-                        if scanned_count % 50 == 0:
-                            print(f"⏳ İşlenen: {scanned_count}/{total_symbols} ({(scanned_count/total_symbols*100):.1f}%)")
+                        # RSI sinyali
+                        rsi_signal = "AŞIRI ALIM" if price_momentum > 70 else "AŞIRI SATIM" if price_momentum < 30 else "NÖTR"
                         
-                        await asyncio.sleep(0.5)
-
-                    print(f"\n📊 Tarama Özeti:")
-                    print(f"• Taranan: {scanned_count}/{total_symbols}")
-                    print(f"• Bulunan Fırsatlar: {len(opportunities)}")
-                    print(f"• Geçen Süre: {time.time() - current_time:.1f} saniye")
-
-                    # Fırsatları toplu mesaj olarak gönder
-                    if opportunities:
-                        # Her 5 fırsatı bir mesajda birleştir
-                        batch_size = 5
-                        for i in range(0, len(opportunities), batch_size):
-                            batch_opps = opportunities[i:i+batch_size]
-                            
-                            # Mesajları birleştir
-                            combined_message = f"🎯 {len(batch_opps)} Yeni Fırsat!\n\n"
-                            for opp in batch_opps:
-                                combined_message += f"-------------------\n{opp['message']}\n"
-                            
-                            try:
-                                # Uzun mesajları böl (Telegram limiti 4096 karakter)
-                                if len(combined_message) > 4000:
-                                    parts = [combined_message[i:i+4000] for i in range(0, len(combined_message), 4000)]
-                                    for part in parts:
-                                        await self.application.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=part
-                                        )
-                                        await asyncio.sleep(3)  # 3 saniye bekle
-                                else:
-                                    await self.application.bot.send_message(
-                                        chat_id=chat_id,
-                                        text=combined_message
-                                    )
-                                    await asyncio.sleep(3)  # 3 saniye bekle
-                                
-                            except Exception as e:
-                                print(f"📤 Mesaj gönderme hatası: {str(e)}")
-                                await asyncio.sleep(5)  # Hata durumunda 5 saniye bekle
-                                continue
-
-                    self.last_scan_time = current_time
-                    await asyncio.sleep(1)
-
+                        # Volatilite sinyali
+                        volatility_signal = "YÜKSEK" if volatility > 5 else "DÜŞÜK" if volatility < 1 else "NÖTR"
+                        
+                        # Hacim profili
+                        volume_profile = "ÇOK YÜKSEK" if volume_momentum > 3 else "YÜKSEK" if volume_momentum > 1.5 else "NORMAL"
+                        
+                        # Totaller
+                        total1 = max(0, volume_momentum * abs(price_momentum))
+                        total2 = max(0, volatility * volume_momentum)
+                        total3 = max(0, (abs(price_change) + volatility) * volume_momentum)
+                        
+                        # İşlem sinyalleri
+                        long_signal = (
+                            price_change > 0 and
+                            current_price > low and
+                            volatility > 1 and
+                            volume_momentum > 1
+                        )
+                        
+                        short_signal = (
+                            price_change < 0 and
+                            current_price < high and
+                            volatility > 1 and
+                            volume_momentum > 1
+                        )
+                        
+                        # Risk seviyesi
+                        risk_level = min(5, max(1, int((volatility / 3 + volume_momentum / 1.5 + abs(price_momentum) / 15))))
+                        
+                        # Pozisyon büyüklüğü
+                        position_size = min(5, max(1, int((volume_momentum * 1.5 + abs(price_momentum) / 8 + volatility / 3) / 3)))
+                        
+                        # Skor hesaplama
+                        volume_score = min(100, max(0, volume_momentum * 15))
+                        volatility_score = min(100, max(0, volatility * 5))
+                        momentum_score = min(100, max(0, abs(price_momentum) * 3))
+                        
+                        total_score = (
+                            volume_score * 0.4 +
+                            volatility_score * 0.3 +
+                            momentum_score * 0.3
+                        )
+                        
+                        # Fırsatı listeye ekle
+                        opportunities.append({
+                            'symbol': symbol,
+                            'price': current_price,
+                            'volume': volume,
+                            'change': price_change,
+                            'high': high,
+                            'low': low,
+                            'volatility': volatility,
+                            'price_momentum': price_momentum,
+                            'volume_momentum': volume_momentum,
+                            'total1': total1,
+                            'total2': total2,
+                            'total3': total3,
+                            'long_signal': long_signal,
+                            'short_signal': short_signal,
+                            'risk_level': risk_level,
+                            'position_size': position_size,
+                            'rsi_signal': rsi_signal,
+                            'volatility_signal': volatility_signal,
+                            'volume_profile': volume_profile,
+                            'score': total_score
+                        })
+                        found_opportunities += 1
+                        
                 except Exception as e:
-                    print(f"🚫 Tarama döngüsü hatası: {str(e)}")
-                    await asyncio.sleep(5)
+                    await self._log(f"{symbol} için hesaplama hatası: {str(e)}", "error")
+                    continue
 
-        except asyncio.CancelledError:
-            print("⛔️ Tarama görevi iptal edildi")
+            # Debug mesajı
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔍 {len(opportunities)} fırsat analiz edildi."
+            )
+
+            # En iyi 10'u seç
+            opportunities.sort(key=lambda x: x['score'], reverse=True)
+            top_10 = opportunities[:10]
+
+            if not top_10:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ Kriterlere uygun fırsat bulunamadı!"
+                )
+                return
+
+            # Sonuçları gönder
+            message = "🎯 KRIPTO FIRSAT TARAYICI\n"
+            message += "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            for idx, opp in enumerate(top_10, 1):
+                signal_emoji = "🟢" if opp['long_signal'] else "🔴" if opp['short_signal'] else "⚪"
+                risk_emoji = "🔥" * opp['risk_level']
+                position_stars = "⭐" * opp['position_size']
+                
+                message += f"#{idx} {signal_emoji} {opp['symbol']}\n"
+                message += f"━━━━━━━━━━━━━━━━━━━━━\n"
+                message += f"💰 Fiyat: ${opp['price']:.4f}\n"
+                message += f"📊 24s Değişim: %{opp['change']:.2f}\n"
+                message += f"📈 24s Hacim: ${opp['volume']:,.0f}\n"
+                message += f"📐 Volatilite: %{opp['volatility']:.2f}\n\n"
+                
+                message += f"📊 TEKNIK GÖSTERGELER:\n"
+                message += f"• Momentum: %{opp['price_momentum']:.2f}\n"
+                message += f"• RSI Durumu: {opp['rsi_signal']}\n"
+                message += f"• Volatilite: {opp['volatility_signal']}\n"
+                message += f"• Hacim Profili: {opp['volume_profile']}\n\n"
+                
+                message += f"💫 TOTALLER:\n"
+                message += f"• T1 (Momentum): {opp['total1']:.1f}\n"
+                message += f"• T2 (Volatilite): {opp['total2']:.1f}\n"
+                message += f"• T3 (Genel Güç): {opp['total3']:.1f}\n\n"
+                
+                message += f"🎯 15 DAKİKALIK SINYAL:\n"
+                if opp['long_signal']:
+                    message += "LONG ⬆️\n"
+                    message += f"• Giriş: ${opp['price']:.4f}\n"
+                    message += f"• Hedef: ${opp['price'] * 1.02:.4f}\n"
+                    message += f"• Stop: ${opp['price'] * 0.99:.4f}\n"
+                elif opp['short_signal']:
+                    message += "SHORT ⬇️\n"
+                    message += f"• Giriş: ${opp['price']:.4f}\n"
+                    message += f"• Hedef: ${opp['price'] * 0.98:.4f}\n"
+                    message += f"• Stop: ${opp['price'] * 1.01:.4f}\n"
+                else:
+                    message += "BEKLE ⏳\n"
+                    message += "• Sinyal bekleniyor...\n"
+                
+                message += f"\n🎲 RİSK SEVİYESİ: {risk_emoji}\n"
+                message += f"💪 POZİSYON BÜYÜKLÜĞÜ: {position_stars}\n"
+                message += f"⭐ FIRSAT SKORU: {opp['score']:.1f}/100\n"
+                message += "\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            # Mesajı bölerek gönder
+            if len(message) > 4000:
+                chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+                for chunk in chunks:
+                    await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk
+                    )
+            else:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=message
+                )
+
+            # Özet mesajı
+            summary = (
+                "📈 PIYASA ÖZETI:\n"
+                f"• Taranan Coin Sayısı: {len(market_data)}\n"
+                f"• Bulunan Fırsat Sayısı: {len(opportunities)}\n"
+                f"• LONG Sinyali: {sum(1 for x in top_10 if x['long_signal'])}\n"
+                f"• SHORT Sinyali: {sum(1 for x in top_10 if x['short_signal'])}\n"
+                f"• Ortalama Volatilite: {sum(x['volatility'] for x in top_10) / len(top_10):.2f}%\n"
+                "\n🔍 Bir sonraki tarama için /scan komutunu kullanın."
+            )
+            
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=summary
+            )
+
         except Exception as e:
-            print(f"💥 Ana tarama hatası: {str(e)}")
+            await self._log(f"Tarama hatası: {str(e)}", "error")
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ Tarama sırasında bir hata oluştu: {str(e)}"
+            )
+        finally:
+            self.is_scanning = False
 
     async def _scan_single_coin(self, symbol: str) -> Dict:
         """Tek bir coin için fırsat analizi"""
@@ -1202,346 +1267,220 @@ class TelegramBot:
             return f"Öneri oluşturma hatası: {str(e)}"
 
     async def track_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Belirli bir coini veya tüm coinleri takip et"""
+        """Coin takip komutunu işle"""
         try:
-            chat_id = update.effective_chat.id
-            message_parts = update.message.text.split()
-            
-            # Eğer coin belirtilmişse (örn: /track BTCUSDT)
-            if len(message_parts) > 1:
-                symbol = message_parts[1].upper()
-                # BTCUSDT formatını BTC/USDT formatına çevir
-                if symbol.endswith('USDT'):
-                    symbol = f"{symbol[:-4]}/USDT"
-                
-                # Coin zaten takip ediliyor mu kontrol et
-                task_key = f"{chat_id}_{symbol}"
-                if task_key in self.watch_tasks:
-                    # Takibi durdur
-                    self.watch_tasks[task_key].cancel()
-                    del self.watch_tasks[task_key]
-                    await update.message.reply_text(f"🛑 {symbol} takibi durduruldu!")
-                    return
-                
-                # Coin'in geçerli olduğunu kontrol et
-                ticker = await self.market_scanner.get_ticker(symbol)
-                if not ticker:
-                    await update.message.reply_text(f"❌ {symbol} geçerli bir coin değil!")
-                    return
-                
-                # Takibi başlat
-                current_price = ticker['last']
-                self.watch_tasks[task_key] = asyncio.create_task(
-                    self._watch_coin(symbol, chat_id, current_price)
-                )
-                
+            if not context.args:
                 await update.message.reply_text(
-                    f"🔄 {symbol} takip ediliyor!\n"
-                    f"• Güncel Fiyat: ${current_price:,.4f}\n"
-                    f"• Hacim: ${ticker['quoteVolume']:,.0f}\n"
-                    "Durdurmak için aynı komutu tekrar yazın."
-                )
-            
-            # Coin belirtilmemişse tüm coinleri takip et
-            else:
-                if self.track_active:
-                    self.track_active = False
-                    if self.track_task:
-                        self.track_task.cancel()
-                    await update.message.reply_text("🛑 Tüm coinlerin takibi durduruldu!")
-                    return
-                
-                self.track_active = True
-                await update.message.reply_text(
-                    "🔄 Tüm coinler takip ediliyor!\n"
-                    "Önemli fiyat hareketlerinde bildirim alacaksınız.\n"
-                    "Durdurmak için tekrar /track yazın."
-                )
-                
-                self.track_task = asyncio.create_task(self._track_all_coins(chat_id))
-            
-        except Exception as e:
-            await update.message.reply_text(f"❌ Track hatası: {str(e)}")
-
-    async def _watch_coin(self, symbol: str, chat_id: int, entry_price: float):
-        """Coin takibi ve sinyal üretimi"""
-        try:
-            print(f"🔍 {symbol} takibi başladı...")
-            last_notification_time = 0
-            last_signal_time = 0
-            signal_cooldown = 3600  # Sinyaller arası minimum süre (1 saat)
-            
-            while True:
-                try:
-                    # Fiyat ve OHLCV verilerini al
-                    ticker = await self.market_scanner.get_ticker(symbol)
-                    df = await self.market_scanner.get_ohlcv(symbol)
-                    
-                    if not ticker or df is None or df.empty:
-                        await asyncio.sleep(10)
-                        continue
-
-                    current_price = ticker['last']
-                    volume = ticker['quoteVolume']
-                    current_time = time.time()
-                    
-                    # Teknik analiz yap
-                    analysis = self._calculate_indicators(df)
-                    
-                    # Fiyat değişimi kontrolü
-                    price_change = ((current_price - entry_price) / entry_price) * 100
-                    
-                    # Önemli seviyeler
-                    next_support = max([s for s in analysis.get('support_levels', []) if s < current_price], default=current_price * 0.985)
-                    next_resistance = min([r for r in analysis.get('resistance_levels', []) if r > current_price], default=current_price * 1.015)
-                    
-                    # Sinyal kontrolleri
-                    rsi = analysis.get('rsi', 50)
-                    macd = analysis.get('macd', {})
-                    bb = analysis.get('bb', {})
-                    vwap = analysis.get('vwap', current_price)
-                    
-                    # LONG Sinyali
-                    long_signal = (
-                        rsi < 35 and
-                        macd.get('macd', 0) > macd.get('signal', 0) and
-                        current_price > vwap and
-                        current_price > bb.get('lower', 0) and
-                        current_price < next_resistance * 0.98
-                    )
-                    
-                    # SHORT Sinyali
-                    short_signal = (
-                        rsi > 65 and
-                        macd.get('macd', 0) < macd.get('signal', 0) and
-                        current_price < vwap and
-                        current_price < bb.get('upper', 0) and
-                        current_price > next_support * 1.02
-                    )
-                    
-                    # Sinyal mesajı oluştur
-                    if (long_signal or short_signal) and (current_time - last_signal_time > signal_cooldown):
-                        signal_type = "LONG" if long_signal else "SHORT"
-                        emoji = "💚" if long_signal else "❤️"
-                        target = next_resistance if long_signal else next_support
-                        stop = next_support if long_signal else next_resistance
-                        
-                        # Risk yönetimi
-                        risk_ratio = abs(target - current_price) / abs(current_price - stop)
-                        suggested_leverage = min(3, round(risk_ratio))
-                        
-                        await self.application.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"""⚡️ {symbol} {signal_type} SİNYALİ {emoji}
-
-💰 Fiyat Seviyeleri:
-• Giriş: ${current_price:.4f}
-• Hedef: ${target:.4f} ({((target-current_price)/current_price*100):.1f}%)
-• Stop: ${stop:.4f} ({((stop-current_price)/current_price*100):.1f}%)
-
-📊 Teknik Durum:
-• RSI: {rsi:.1f}
-• MACD: {"Pozitif" if macd.get('histogram', 0) > 0 else "Negatif"}
-• VWAP: ${vwap:.4f}
-• Hacim: ${volume:,.0f}
-
-⚠️ Risk Yönetimi:
-• Önerilen Kaldıraç: {suggested_leverage}x
-• Risk/Ödül: {risk_ratio:.2f}
-• İzole Marjin Kullanın!
-• Stop-Loss Zorunlu!
-
-🎯 Strateji:
-• Giriş: ${current_price:.4f} civarı
-• Kâr Al: ${target:.4f}
-• Zarar Kes: ${stop:.4f}
-• Pozisyon: Bakiyenin %10'u
-
-⚠️ Önemli:
-• İzole marjin kullanın
-• Stop-loss emirlerinizi girin
-• Kaldıracı düşük tutun
-• FOMO yapmayın!"""
-                        )
-                        last_signal_time = current_time
-                    
-                    # Rutin durum güncellemesi (5 dakikada bir)
-                    if current_time - last_notification_time >= 300:
-                        change_emoji = "📈" if price_change > 0 else "📉"
-                        
-                        await self.application.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"""🔔 {symbol} Durum {change_emoji}
-
-• Fiyat: ${current_price:,.4f}
-• Değişim: %{price_change:.1f}
-• RSI: {rsi:.1f}
-• Hacim: ${volume:,.0f}
-
-• Destek: ${next_support:.4f}
-• Direnç: ${next_resistance:.4f}
-
-/analyze_{symbol.replace('/', '')} için detaylı analiz"""
-                        )
-                        last_notification_time = current_time
-                        entry_price = current_price
-
-                    await asyncio.sleep(10)
-
-                except Exception as e:
-                    print(f"❌ {symbol} takip hatası: {str(e)}")
-                    await asyncio.sleep(10)
-
-        except asyncio.CancelledError:
-            print(f"⛔️ {symbol} takibi iptal edildi")
-        except Exception as e:
-            print(f"💥 {symbol} genel takip hatası: {str(e)}")
-
-    async def _track_all_coins(self, chat_id: int):
-        """Tüm coinleri takip et"""
-        try:
-            while self.track_active:
-                try:
-                    # Tüm sembolleri al
-                    all_symbols = await self.market_scanner.get_all_symbols()
-                    if not all_symbols:
-                        await asyncio.sleep(5)
-                        continue
-
-                    print(f"🔍 {len(all_symbols)} coin takip ediliyor...")
-
-                    for symbol in all_symbols:
-                        try:
-                            # Son fiyatı al
-                            ticker = await self.market_scanner.get_ticker(symbol)
-                            if not ticker:
-                                continue
-
-                            current_price = ticker['last']
-                            
-                            # Önceki fiyatı kontrol et
-                            prev_price = self.tracked_prices.get(symbol)
-                            if prev_price is None:
-                                self.tracked_prices[symbol] = current_price
-                                continue
-
-                            # Fiyat değişimini hesapla
-                            price_change = ((current_price - prev_price) / prev_price) * 100
-
-                            # Önemli fiyat hareketlerini bildir
-                            # Major coinler için daha düşük eşik değeri
-                            threshold = 2 if symbol in ['BTC/USDT', 'ETH/USDT'] else 5
-                            
-                            if abs(price_change) >= threshold:
-                                change_type = "YÜKSELİŞ 📈" if price_change > 0 else "DÜŞÜŞ 📉"
-                                volume = ticker.get('quoteVolume', 0)
-                                
-                                # Major coinler için özel format
-                                if symbol in ['BTC/USDT', 'ETH/USDT']:
-                                    message = f"""🚨 {symbol} {change_type}
-
-• Fiyat: ${current_price:,.2f}
-• Değişim: %{price_change:.1f}
-• 24s Hacim: ${volume:,.0f}
-
-/analyze_{symbol.replace('/', '')} için detaylı analiz"""
-                                else:
-                                    message = f"""⚡️ Önemli {change_type}: {symbol}
-
-• Fiyat: ${current_price:.4f}
-• Değişim: %{price_change:.1f}
-• Hacim: ${volume:,.0f}
-
-/analyze_{symbol.replace('/', '')} için detaylı analiz"""
-
-                                await self.application.send_message(
-                                    chat_id=chat_id,
-                                    text=message,
-                                    parse_mode='HTML'
-                                )
-                                
-                                # Fiyatı güncelle
-                                self.tracked_prices[symbol] = current_price
-
-                            # Her 100 coinde bir debug mesajı
-                            if len(self.tracked_prices) % 100 == 0:
-                                print(f"⏳ {len(self.tracked_prices)} coin takip ediliyor...")
-
-                            await asyncio.sleep(0.1)  # Rate limit için bekle
-
-                        except Exception as e:
-                            print(f"❌ Coin takip hatası {symbol}: {str(e)}")
-                            continue
-
-                    await asyncio.sleep(10)  # Her 10 saniyede bir tekrar kontrol et
-
-                except Exception as e:
-                    print(f"🚫 Takip döngüsü hatası: {str(e)}")
-                    await asyncio.sleep(5)
-
-        except asyncio.CancelledError:
-            print("⛔️ Takip görevi iptal edildi")
-        except Exception as e:
-            print(f"💥 Ana takip hatası: {str(e)}")
-        finally:
-            self.tracked_prices.clear()
-
-    async def start_coin_tracking(self, update: Update, symbol: str, chat_id: int):
-        """Coin takibini başlat"""
-        try:
-            # Major coinleri kontrol et
-            major_coins = {'BTC/USDT', 'ETH/USDT', 'BNB/USDT'}
-            if symbol in major_coins:
-                await update.message.reply_text(
-                    f"⚠️ {symbol} otomatik bildirimler kapalıdır.\n"
-                    "Sadece manuel kontrol yapabilirsiniz."
+                    "❌ Lütfen takip edilecek coini belirtin.\n"
+                    "Örnek: /track 1 (listedeki 1 numaralı coin için)"
                 )
                 return
-                
-            # Coini takibe al
-            if chat_id not in self.watched_coins:
-                self.watched_coins[chat_id] = {}
-                
-            # Coin verilerini al
-            ticker = await self.market_scanner.get_ticker(symbol)
-            if not ticker:
-                await update.message.reply_text(f"❌ {symbol} verileri alınamadı!")
+
+            chat_id = update.message.chat_id
+            selection = int(context.args[0])
+
+            if not hasattr(self, 'last_opportunities') or not self.last_opportunities:
+                await update.message.reply_text("❌ Önce /scan komutu ile tarama yapın!")
                 return
-                
-            # Analiz yap
-            df = await self.market_scanner.get_ohlcv(symbol)
-            if df is None:
-                await update.message.reply_text(f"❌ {symbol} OHLCV verileri alınamadı!")
+
+            if selection < 1 or selection > len(self.last_opportunities):
+                await update.message.reply_text("❌ Geçersiz seçim! Lütfen listeden geçerli bir numara seçin.")
                 return
-                
-            analysis = self._calculate_indicators(df)
-            trade_signal = await self._analyze_trading_opportunity(symbol, ticker, analysis)
+
+            coin_data = self.last_opportunities[selection - 1]
+            symbol = coin_data['symbol']
+
+            # Zaten takip ediliyor mu kontrol et
+            if chat_id in self.tracked_coins and symbol in self.tracked_coins[chat_id]:
+                await update.message.reply_text(f"⚠️ {symbol} zaten takip ediliyor!")
+                return
+
+            # Takip verilerini kaydet
+            if chat_id not in self.tracked_coins:
+                self.tracked_coins[chat_id] = {}
             
-            # Takip bilgilerini kaydet
-            self.watched_coins[chat_id][symbol] = {
-                'last_alert': datetime.now(),
-                'entry_price': ticker['last'],
-                'target': trade_signal.get('target', 0),
-                'stop_loss': trade_signal.get('stop_loss', 0)
+            self.tracked_coins[chat_id][symbol] = {
+                'entry_price': coin_data['price'],
+                'target_price': coin_data['price'] * 1.02 if coin_data['long_signal'] else coin_data['price'] * 0.98,
+                'stop_price': coin_data['price'] * 0.99 if coin_data['long_signal'] else coin_data['price'] * 1.01,
+                'is_long': coin_data['long_signal'],
+                'start_time': time.time(),
+                'last_alert': time.time()
             }
+
+            # Takip görevini başlat
+            if chat_id not in self.track_tasks:
+                self.track_tasks[chat_id] = {}
             
-            # Bilgilendirme mesajı
+            self.track_tasks[chat_id][symbol] = asyncio.create_task(
+                self._track_coin(chat_id, symbol)
+            )
+
             await update.message.reply_text(
                 f"✅ {symbol} takibe alındı!\n\n"
-                f"• Mevcut Fiyat: ${ticker['last']:.4f}\n"
-                f"• 24s Değişim: %{ticker['percentage']:.1f}\n"
-                + (trade_signal.get('message', '') if trade_signal else '')
+                f"📈 Giriş Fiyatı: ${coin_data['price']:.4f}\n"
+                f"🎯 Hedef: ${self.tracked_coins[chat_id][symbol]['target_price']:.4f}\n"
+                f"🛑 Stop: ${self.tracked_coins[chat_id][symbol]['stop_price']:.4f}\n"
+                f"📊 Yön: {'LONG 📈' if coin_data['long_signal'] else 'SHORT 📉'}"
             )
+
+        except Exception as e:
+            await self._log(f"Track komutu hatası: {str(e)}", "error")
+            await update.message.reply_text("❌ Takip başlatılırken bir hata oluştu!")
+
+    async def _track_coin(self, chat_id: int, symbol: str):
+        """Coin takip görevi"""
+        try:
+            while True:
+                # Her 30 saniyede bir kontrol et
+                await asyncio.sleep(30)
+                
+                if chat_id not in self.tracked_coins or symbol not in self.tracked_coins[chat_id]:
+                    break
+
+                coin_data = self.tracked_coins[chat_id][symbol]
+                current_price = await self._get_current_price(symbol)
+                
+                if not current_price:
+                    continue
+
+                # Hedef ve stop kontrolü
+                if coin_data['is_long']:
+                    if current_price >= coin_data['target_price']:
+                        await self.application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🎯 {symbol} HEDEF BAŞARILI!\n\n"
+                                 f"Giriş: ${coin_data['entry_price']:.4f}\n"
+                                 f"Hedef: ${coin_data['target_price']:.4f}\n"
+                                 f"Mevcut: ${current_price:.4f}\n"
+                                 f"Kar: %{((current_price/coin_data['entry_price'])-1)*100:.2f}\n\n"
+                                 f"✅ Karı realize etmeniz önerilir!"
+                        )
+                        await self.untrack_coin(chat_id, symbol)
+                        break
+                    
+                    elif current_price <= coin_data['stop_price']:
+                        await self.application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ {symbol} STOP SEVİYESİNDE!\n\n"
+                                 f"Giriş: ${coin_data['entry_price']:.4f}\n"
+                                 f"Stop: ${coin_data['stop_price']:.4f}\n"
+                                 f"Mevcut: ${current_price:.4f}\n"
+                                 f"Zarar: %{((current_price/coin_data['entry_price'])-1)*100:.2f}\n\n"
+                                 f"❌ Zararı durdurmak için çıkmanız önerilir!"
+                        )
+                        await self._untrack_coin(chat_id, symbol)
+                        break
+                else:  # SHORT pozisyon
+                    if current_price <= coin_data['target_price']:
+                        await self.application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🎯 {symbol} HEDEF BAŞARILI!\n\n"
+                                 f"Giriş: ${coin_data['entry_price']:.4f}\n"
+                                 f"Hedef: ${coin_data['target_price']:.4f}\n"
+                                 f"Mevcut: ${current_price:.4f}\n"
+                                 f"Kar: %{((coin_data['entry_price']/current_price)-1)*100:.2f}\n\n"
+                                 f"✅ Karı realize etmeniz önerilir!"
+                        )
+                        await self._untrack_coin(chat_id, symbol)
+                        break
+                    
+                    elif current_price >= coin_data['stop_price']:
+                        await self.application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ {symbol} STOP SEVİYESİNDE!\n\n"
+                                 f"Giriş: ${coin_data['entry_price']:.4f}\n"
+                                 f"Stop: ${coin_data['stop_price']:.4f}\n"
+                                 f"Mevcut: ${current_price:.4f}\n"
+                                 f"Zarar: %{((coin_data['entry_price']/current_price)-1)*100:.2f}\n\n"
+                                 f"❌ Zararı durdurmak için çıkmanız önerilir!"
+                        )
+                        await self._untrack_coin(chat_id, symbol)
+                        break
+
+        except Exception as e:
+            await self._log(f"Coin takip hatası ({symbol}): {str(e)}", "error")
+
+    async def _get_current_price(self, symbol: str) -> float:
+        """Mevcut fiyatı al"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'https://api.binance.com/api/v3/ticker/price?symbol={symbol}') as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return float(data['price'])
+        except Exception as e:
+            await self._log(f"Fiyat alma hatası ({symbol}): {str(e)}", "error")
+        return None
+
+    async def _untrack_coin(self, chat_id: int, symbol: str):
+        """Coin takibini sonlandır"""
+        try:
+            if chat_id in self.tracked_coins and symbol in self.tracked_coins[chat_id]:
+                del self.tracked_coins[chat_id][symbol]
             
-            # Takip görevini başlat
-            task_key = f"{chat_id}_{symbol}"
-            if task_key not in self.watch_tasks:
-                self.watch_tasks[task_key] = asyncio.create_task(
-                    self._watch_coin(symbol, chat_id, ticker['last'])
-                )
+            if chat_id in self.track_tasks and symbol in self.track_tasks[chat_id]:
+                self.track_tasks[chat_id][symbol].cancel()
+                del self.track_tasks[chat_id][symbol]
                 
         except Exception as e:
-            await update.message.reply_text(f"❌ Hata: {str(e)}")
+            await self._log(f"Takip sonlandırma hatası ({symbol}): {str(e)}", "error")
+
+    async def untrack_command(self, update, context):
+        """Takibi sonlandırma komutunu işle"""
+        try:
+            if not context.args:
+                await update.message.reply_text(
+                    "❌ Lütfen takibi sonlandırılacak coini belirtin.\n"
+                    "Örnek: /untrack BTCUSDT"
+                )
+                return
+
+            chat_id = update.message.chat_id
+            symbol = context.args[0].upper()
+
+            if chat_id not in self.tracked_coins or symbol not in self.tracked_coins[chat_id]:
+                await update.message.reply_text(f"❌ {symbol} takip edilmiyor!")
+                return
+
+            await self._untrack_coin(chat_id, symbol)
+            await update.message.reply_text(f"✅ {symbol} takibi sonlandırıldı!")
+
+        except Exception as e:
+            await self._log(f"Untrack komutu hatası: {str(e)}", "error")
+            await update.message.reply_text("❌ Takip sonlandırılırken bir hata oluştu!")
+
+    async def list_tracked_command(self, update, context):
+        """Takip edilen coinleri listele"""
+        try:
+            chat_id = update.message.chat_id
+            
+            if chat_id not in self.tracked_coins or not self.tracked_coins[chat_id]:
+                await update.message.reply_text("📝 Takip edilen coin bulunmuyor!")
+                return
+
+            message = "📊 TAKİP EDİLEN COİNLER:\n\n"
+            
+            for symbol, data in self.tracked_coins[chat_id].items():
+                current_price = await self._get_current_price(symbol)
+                if current_price:
+                    profit = ((current_price/data['entry_price'])-1)*100 if data['is_long'] else ((data['entry_price']/current_price)-1)*100
+                    
+                    message += (
+                        f"💎 {symbol}\n"
+                        f"📈 Yön: {'LONG' if data['is_long'] else 'SHORT'}\n"
+                        f"💰 Giriş: ${data['entry_price']:.4f}\n"
+                        f"📊 Mevcut: ${current_price:.4f}\n"
+                        f"💫 Kar/Zarar: %{profit:.2f}\n"
+                        f"🎯 Hedef: ${data['target_price']:.4f}\n"
+                        f"🛑 Stop: ${data['stop_price']:.4f}\n\n"
+                    )
+
+            await update.message.reply_text(message)
+
+        except Exception as e:
+            await self._log(f"List tracked komutu hatası: {str(e)}", "error")
+            await update.message.reply_text("❌ Liste alınırken bir hata oluştu!")
 
     async def handle_coin_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Kullanıcıdan gelen coin mesajlarını işle"""
@@ -2367,6 +2306,316 @@ class TelegramBot:
                         
         except Exception as e:
             print(f"Hedef kontrol hatası {symbol}: {str(e)}")
+
+    async def _get_market_data(self) -> list:
+        """Market verilerini getir ve detaylı analiz yap"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get('https://api.binance.com/api/v3/ticker/24hr') as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # USDT çiftlerini filtrele
+                        usdt_pairs = [
+                            item for item in data 
+                            if item['symbol'].endswith('USDT') 
+                            and not item['symbol'].startswith('USDC')
+                            and float(item['quoteVolume']) > 500000  # Minimum 500K USDT hacim
+                            and item['symbol'] not in self.excluded_coins
+                        ]
+                        
+                        # Fırsatları analiz et
+                        opportunities = []
+                        for pair in usdt_pairs:
+                            try:
+                                price = float(pair['lastPrice'])
+                                volume = float(pair['quoteVolume'])
+                                change = float(pair['priceChangePercent'])
+                                high = float(pair['highPrice'])
+                                low = float(pair['lowPrice'])
+                                
+                                # Volatilite hesapla
+                                volatility = ((high - low) / low) * 100
+                                
+                                # Risk seviyesi belirle (1-5 arası)
+                                risk_level = 1
+                                if volatility > 5: risk_level += 1
+                                if abs(change) > 5: risk_level += 1
+                                if volume > 10000000: risk_level += 1
+                                if abs(change) > 10: risk_level += 1
+                                
+                                # Trend gücü (1-5 arası)
+                                trend_strength = 1
+                                if abs(change) > 2: trend_strength += 1
+                                if abs(change) > 5: trend_strength += 1
+                                if volume > 5000000: trend_strength += 1
+                                if volatility > 3: trend_strength += 1
+                                
+                                # Fırsat puanı hesaplama (daha gerçekçi)
+                                volume_score = min(25, (volume / 10000000) * 10)  # Hacim puanı (max 25)
+                                change_score = min(25, abs(change) * 2)  # Değişim puanı (max 25)
+                                volatility_score = min(20, volatility * 2)  # Volatilite puanı (max 20)
+                                trend_score = trend_strength * 4  # Trend puanı (max 20)
+                                risk_score = (6 - risk_level) * 2  # Risk puanı (max 10)
+                                
+                                # Toplam fırsat puanı (0-100)
+                                opportunity_score = volume_score + change_score + volatility_score + trend_score + risk_score
+                                
+                                # Minimum kriterleri kontrol et
+                                if volume >= 500000 and abs(change) >= 0.5:
+                                    opportunities.append({
+                                        'symbol': pair['symbol'],
+                                        'price': price,
+                                        'change_24h': change,
+                                        'volume': volume,
+                                        'high': high,
+                                        'low': low,
+                                        'volatility': volatility,
+                                        'risk_level': risk_level,
+                                        'trend_strength': trend_strength,
+                                        'signal': "LONG 📈" if change > 0 else "SHORT 📉",
+                                        'direction': "ALIŞ" if change > 0 else "SATIŞ",
+                                        'volume_profile': "DÜŞÜK 📊" if volume < 1000000 else 
+                                                        "ORTA 📊📊" if volume < 5000000 else 
+                                                        "YÜKSEK 📊📊📊" if volume < 10000000 else 
+                                                        "ÇOK YÜKSEK 📊📊📊📊",
+                                        'opportunity_score': round(opportunity_score, 1),
+                                        'entry_levels': {
+                                            'strong_buy': low + (high - low) * 0.236,
+                                            'buy': low + (high - low) * 0.382,
+                                            'neutral': low + (high - low) * 0.5
+                                        },
+                                        'stop_loss': {
+                                            'tight': price * 0.99 if change > 0 else price * 1.01,
+                                            'normal': price * 0.98 if change > 0 else price * 1.02,
+                                            'wide': price * 0.97 if change > 0 else price * 1.03
+                                        },
+                                        'take_profit': {
+                                            'conservative': price * 1.02 if change > 0 else price * 0.98,
+                                            'moderate': price * 1.05 if change > 0 else price * 0.95,
+                                            'aggressive': price * 1.10 if change > 0 else price * 0.90
+                                        },
+                                        'long_signal': change > 0
+                                    })
+                            except (ValueError, KeyError) as e:
+                                continue
+                        
+                        # Fırsat puanına göre sırala ve en iyi 10 fırsatı al
+                        opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+                        return opportunities[:10]  # Sadece en iyi 10 fırsat
+                        
+            return []
+        except Exception as e:
+            print(f"Market veri hatası: {str(e)}")
+            return []
+
+    async def _log(self, message: str, level: str = "info", notify_user: bool = False, chat_id: Optional[int] = None):
+        """Log message and optionally notify user"""
+        try:
+            # Log seviyesine göre mesajı logla
+            if level == "debug":
+                self.logger.debug(message)
+            elif level == "info":
+                self.logger.info(message)
+            elif level == "warning":
+                self.logger.warning(message)
+            elif level == "error":
+                self.logger.error(message)
+                
+            # Kullanıcıya bildirim gönder
+            if notify_user and chat_id:
+                emoji_map = {
+                    "debug": "🔍",
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "error": "❌"
+                }
+                emoji = emoji_map.get(level, "ℹ️")
+                
+                try:
+                    await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"{emoji} {message}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Kullanıcı bildirimi gönderilemedi: {str(e)}")
+                    
+        except Exception as e:
+            # Loglama sırasında hata oluşursa
+            print(f"Loglama hatası: {str(e)}")
+            if notify_user and chat_id:
+                try:
+                    await self.application.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"❌ Sistem hatası: {str(e)}"
+                    )
+                except:
+                    pass  # Son çare olarak hatayı sessizce geç
+
+    async def _start_command(self, update, context):
+        """Handle /start command"""
+        welcome_message = (
+            "🚀 *Kripto Para Fırsat Tarayıcısına Hoş Geldiniz!*\n\n"
+            "Bu bot, kripto para piyasasındaki en iyi alım-satım fırsatlarını bulmanıza yardımcı olur.\n\n"
+            "📊 *Kullanılabilir Komutlar:*\n"
+            "• /scan - Piyasa taraması başlat\n"
+            "• /help - Detaylı yardım menüsü\n"
+            "• /stop - Aktif taramayı durdur\n\n"
+            "🔍 *Tarayıcı Nasıl Çalışır?*\n"
+            "1. Binance borsasındaki tüm USDT çiftlerini analiz eder\n"
+            "2. Hacim, volatilite ve momentum verilerini inceler\n"
+            "3. En iyi 10 fırsatı seçer ve detaylı rapor sunar\n\n"
+            "📈 *Her Coin İçin Sunulan Bilgiler:*\n"
+            "• Güncel fiyat ve 24 saatlik değişim\n"
+            "• İşlem hacmi ve volatilite analizi\n"
+            "• RSI ve momentum göstergeleri\n"
+            "• Risk seviyesi ve pozisyon önerileri\n"
+            "• LONG/SHORT sinyalleri ve hedef fiyatlar\n\n"
+            "⚡️ *Özel Özellikler:*\n"
+            "• T1: Momentum gücü göstergesi\n"
+            "• T2: Volatilite etkisi analizi\n"
+            "• T3: Genel güç endeksi\n\n"
+            "Detaylı bilgi için /help komutunu kullanın."
+        )
+        
+        try:
+            await update.message.reply_text(welcome_message, parse_mode='Markdown')
+            await self._log(f"Yeni kullanıcı başladı: {update.effective_user.id}", "info")
+        except Exception as e:
+            await self._log(f"Start komutu hatası: {str(e)}", "error")
+
+    async def _help_command(self, update, context):
+        """Handle /help command"""
+        help_message = (
+            "📚 *DETAYLI KULLANIM KILAVUZU*\n\n"
+            "*1. Temel Komutlar:*\n"
+            "• /scan - Yeni bir piyasa taraması başlatır\n"
+            "• /stop - Aktif taramayı durdurur\n"
+            "• /help - Bu yardım menüsünü gösterir\n\n"
+            
+            "*2. Tarama Sonuçlarını Okuma:*\n"
+            "🟢 LONG Sinyali:\n"
+            "• Yükselen momentum\n"
+            "• Artan işlem hacmi\n"
+            "• Pozitif fiyat değişimi\n\n"
+            
+            "🔴 SHORT Sinyali:\n"
+            "• Düşen momentum\n"
+            "• Artan işlem hacmi\n"
+            "• Negatif fiyat değişimi\n\n"
+            
+            "*3. Risk Seviyeleri:*\n"
+            "🔥 - Çok Düşük Risk\n"
+            "🔥🔥 - Düşük Risk\n"
+            "🔥🔥🔥 - Orta Risk\n"
+            "🔥🔥🔥🔥 - Yüksek Risk\n"
+            "🔥🔥🔥🔥🔥 - Çok Yüksek Risk\n\n"
+            
+            "*4. Pozisyon Büyüklüğü:*\n"
+            "⭐ - Çok Küçük (%1-2)\n"
+            "⭐⭐ - Küçük (%2-5)\n"
+            "⭐⭐⭐ - Orta (%5-10)\n"
+            "⭐⭐⭐⭐ - Büyük (%10-15)\n"
+            "⭐⭐⭐⭐⭐ - Çok Büyük (%15-20)\n\n"
+            
+            "*5. Teknik Göstergeler:*\n"
+            "• *RSI Durumu:*\n"
+            "  - AŞIRI ALIM: Satış fırsatı\n"
+            "  - AŞIRI SATIM: Alım fırsatı\n"
+            "  - NÖTR: Bekle ve izle\n\n"
+            
+            "• *Volatilite:*\n"
+            "  - YÜKSEK: Riskli ama potansiyel yüksek\n"
+            "  - DÜŞÜK: Daha güvenli, potansiyel düşük\n"
+            "  - NÖTR: Normal piyasa koşulları\n\n"
+            
+            "• *Hacim Profili:*\n"
+            "  - ÇOK YÜKSEK: Güçlü piyasa ilgisi\n"
+            "  - YÜKSEK: Artan ilgi\n"
+            "  - NORMAL: Standart işlem hacmi\n\n"
+            
+            "*6. TOTAL Göstergeleri:*\n"
+            "• T1 (Momentum): Fiyat hareketinin gücü\n"
+            "• T2 (Volatilite): Fiyat dalgalanması etkisi\n"
+            "• T3 (Genel Güç): Toplam piyasa etkisi\n\n"
+            
+            "*7. Önerilen Kullanım:*\n"
+            "1. Düzenli olarak /scan komutunu kullanın\n"
+            "2. Risk seviyesine göre pozisyon alın\n"
+            "3. Stop-loss seviyelerine dikkat edin\n"
+            "4. Birden fazla göstergeyi birlikte değerlendirin\n\n"
+            
+            "⚠️ *Önemli Notlar:*\n"
+            "• Bu bir öneri sistemidir, kesin alım-satım sinyali değildir\n"
+            "• Her zaman kendi araştırmanızı yapın\n"
+            "• Risk yönetimi kurallarına uyun\n"
+            "• Kaybedebileceğinizden fazlasını riske atmayın"
+        )
+        
+        try:
+            await update.message.reply_text(help_message, parse_mode='Markdown')
+            await self._log(f"Yardım menüsü gösterildi: {update.effective_user.id}", "info")
+        except Exception as e:
+            await self._log(f"Help komutu hatası: {str(e)}", "error")
+
+    async def _scan_command(self, update, context):
+        """Handle /scan command"""
+        try:
+            if self.is_scanning:
+                await update.message.reply_text("⚠️ Tarama zaten devam ediyor!")
+                return
+                
+            await update.message.reply_text(
+                "🔍 Piyasa taraması başlatılıyor...\n"
+                "⏳ Bu işlem birkaç dakika sürebilir."
+            )
+            
+            self.is_scanning = True
+            self.scan_task = asyncio.create_task(
+                self._scan_market(update.message.chat_id)
+            )
+            self.scan_task.add_done_callback(self._scan_completed)
+            
+            await self._log(f"Tarama başlatıldı: {update.effective_user.id}", "info")
+            
+        except Exception as e:
+            await self._log(f"Scan komutu hatası: {str(e)}", "error")
+            await update.message.reply_text(
+                "❌ Tarama başlatılırken bir hata oluştu.\n"
+                "Lütfen daha sonra tekrar deneyin."
+            )
+            self.is_scanning = False
+
+    async def stop_command(self, update, context):
+        """Handle /stop command"""
+        try:
+            if self.is_scanning:
+                self.is_scanning = False
+                if self.scan_task and not self.scan_task.done():
+                    self.scan_task.cancel()
+                    try:
+                        await self.scan_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                await update.message.reply_text("🛑 Tarama durduruldu.")
+                await self._log(f"Tarama durduruldu: {update.effective_user.id}", "info")
+            else:
+                await update.message.reply_text("ℹ️ Aktif tarama bulunmuyor.")
+                
+        except Exception as e:
+            await self._log(f"Stop komutu hatası: {str(e)}", "error")
+            await update.message.reply_text("❌ Tarama durdurulurken bir hata oluştu.")
+
+    def _scan_completed(self, task):
+        """Callback for when scan task completes"""
+        self.is_scanning = False
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            self.logger.info("Tarama iptal edildi")
+        except Exception as e:
+            self.logger.error(f"Tarama sırasında hata oluştu: {str(e)}")
 
 if __name__ == '__main__':
     # Önceki bot instance'larını temizle
