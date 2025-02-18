@@ -28,6 +28,11 @@ import numpy as np
 from scipy.signal import argrelextrema
 import logging
 import json
+from .modules.market_analyzer import MarketAnalyzer
+from .modules.message_formatter import MessageFormatter
+from .modules.handlers.scan_handler import ScanHandler
+from .modules.handlers.track_handler import TrackHandler
+from .modules.utils.logger import setup_logger
 
 # .env dosyasının yolunu bul
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -52,36 +57,22 @@ class TelegramBot:
     def __init__(self, token: str):
         """Initialize the bot with API keys and configuration"""
         # Initialize logger
-        self.logger = logging.getLogger('CoinScanner')
-        self.logger.setLevel(logging.DEBUG)
+        self.logger = setup_logger('CoinScanner')
         
-        # Add handlers if they don't exist
-        if not self.logger.handlers:
-            fh = logging.FileHandler('coin_scanner_debug.log')
-            fh.setLevel(logging.DEBUG)
-            ch = logging.StreamHandler()
-            ch.setLevel(logging.DEBUG)
-            
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            fh.setFormatter(formatter)
-            ch.setFormatter(formatter)
-            
-            self.logger.addHandler(fh)
-            self.logger.addHandler(ch)
-        
-        # Initialize bot
+        # Initialize components
         self.application = Application.builder().token(token).build()
-        self.is_scanning = False
-        self.scan_active = False  # Bu satırı ekledik
+        self.analyzer = MarketAnalyzer(self.logger)
+        self.formatter = MessageFormatter()
         
-        # Takip sistemi için değişkenler
-        self.tracked_coins = {}  # {chat_id: {symbol: {data}}}
-        self.track_tasks = {}   # {chat_id: {symbol: task}}
-        self.last_opportunities = []  # Son tarama sonuçları
+        # Bot state
+        self.last_opportunities = []
         
-        # Command handlers - alt çizgisiz metodlara referans ver
+        # Register handlers
+        self.scan_handler = ScanHandler(self.logger, TrackHandler(self.logger))
+        self.track_handler = TrackHandler(self.logger)
+        self.application.add_handler(CommandHandler("scan", self.scan_handler.handle))
+        self.application.add_handler(CommandHandler("track", self.track_handler.handle))
         self.application.add_handler(CommandHandler("start", self.start_command))
-        self.application.add_handler(CommandHandler("scan", self.scan_command))
         self.application.add_handler(CommandHandler("stop", self.stop_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("track", self.track_command))
@@ -123,8 +114,8 @@ class TelegramBot:
     def _setup_handlers(self):
         """Telegram komut işleyicilerini ayarla"""
         self.application.add_handler(CommandHandler("start", self.start_command))
-        self.application.add_handler(CommandHandler("scan", self.scan_command))
-        self.application.add_handler(CommandHandler("track", self.track_command))
+        self.application.add_handler(CommandHandler("scan", self.scan_handler.handle))
+        self.application.add_handler(CommandHandler("track", self.track_handler.handle))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("untrack", self.untrack_command))
         self.application.add_handler(CommandHandler("list", self.list_tracked_command))
@@ -346,75 +337,35 @@ Yatırım tavsiyesi değildir."""
     async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Fırsat taraması başlat"""
         try:
-            chat_id = update.effective_chat.id
+            interval = "4h" if not context.args else (
+                "15m" if context.args[0].lower() == "scan15" else
+                "4h" if context.args[0].lower() == "scan4" else None
+            )
             
-            if self.scan_active:
-                await update.message.reply_text("⚠️ Tarama zaten aktif!")
+            if interval is None:
+                await update.message.reply_text(
+                    "❌ Geçersiz komut!\n"
+                    "Kullanım:\n"
+                    "/scan - 4 saatlik tarama\n"
+                    "/scan scan15 - 15 dakikalık tarama\n"
+                    "/scan scan4 - 4 saatlik tarama"
+                )
                 return
+
+            await update.message.reply_text(f"🔍 {interval} taraması başlatıldı...")
             
-            await update.message.reply_text("🔍 Fırsat taraması başlatılıyor...")
-            self.scan_active = True
-            
-            opportunities = await self._get_market_data()
-            
-            if not opportunities or len(opportunities) == 0:
+            opportunities = await self.analyzer.get_opportunities(interval)
+            if not opportunities:
                 await update.message.reply_text("❌ Fırsat bulunamadı!")
-                self.scan_active = False
                 return
+                
+            messages = self.formatter.format_opportunities(opportunities, interval)
+            for message in messages:
+                await update.message.reply_text(message)
             
             self.last_opportunities = opportunities
             
-            message = "🎯 KRİPTO FIRSATLARI\n\n"
-            
-            for i, opp in enumerate(opportunities, 1):
-                message += f"#{i} {opp['signal']} {opp['symbol']}\n"
-                message += f"━━━━━━━━━━━━━━━━━━━━━\n"
-                message += f"💰 Fiyat: ${opp['price']:.4f}\n"
-                message += f"📊 24s Değişim: %{opp['change_24h']:.2f}\n"
-                message += f"📈 24s Hacim: ${opp['volume']:,.0f}\n"
-                message += f"📊 Hacim Profili: {opp['volume_profile']}\n"
-                message += f"⚡ Volatilite: %{opp['volatility']:.2f}\n"
-                
-                message += f"\n🎯 GİRİŞ SEVİYELERİ:\n"
-                message += f"• Güçlü Alış: ${opp['entry_levels']['strong_buy']:.4f}\n"
-                message += f"• Alış: ${opp['entry_levels']['buy']:.4f}\n"
-                message += f"• Nötr: ${opp['entry_levels']['neutral']:.4f}\n"
-                
-                message += f"\n🛑 STOP-LOSS:\n"
-                message += f"• Sıkı: ${opp['stop_loss']['tight']:.4f}\n"
-                message += f"• Normal: ${opp['stop_loss']['normal']:.4f}\n"
-                message += f"• Geniş: ${opp['stop_loss']['wide']:.4f}\n"
-                
-                message += f"\n💎 HEDEF FİYATLAR:\n"
-                message += f"• Muhafazakar: ${opp['take_profit']['conservative']:.4f}\n"
-                message += f"• Orta: ${opp['take_profit']['moderate']:.4f}\n"
-                message += f"• Agresif: ${opp['take_profit']['aggressive']:.4f}\n"
-                
-                message += f"\n📊 ANALİZ:\n"
-                message += f"• Risk Seviyesi: {'🔴' * opp['risk_level']}\n"
-                message += f"• Trend Gücü: {'⭐' * opp['trend_strength']}\n"
-                message += f"• Fırsat Puanı: {opp['opportunity_score']:.1f}/100\n"
-                message += "\n━━━━━━━━━━━━━━━━━━━━━\n\n"
-                
-                # Her 3 coin'den sonra mesajı gönder ve yeni mesaj başlat
-                if i % 3 == 0:
-                    await update.message.reply_text(message)
-                    message = "🎯 KRİPTO FIRSATLARI (devam)\n\n"
-            
-            # Kalan mesajı gönder
-            if message != "🎯 KRİPTO FIRSATLARI (devam)\n\n":
-                await update.message.reply_text(message)
-            
-            await update.message.reply_text(
-                "📝 Coin takibi için:\n"
-                "/track <numara> yazın\n\n"
-                "Örnek: /track 1"
-            )
-            
-            self.scan_active = False
-            
         except Exception as e:
-            self.scan_active = False
             await update.message.reply_text(f"❌ Tarama hatası: {str(e)}")
 
     async def _scan_market(self, chat_id: int):
@@ -1402,16 +1353,21 @@ Yatırım tavsiyesi değildir."""
             await self._log(f"Coin takip hatası ({symbol}): {str(e)}", "error")
 
     async def _get_current_price(self, symbol: str) -> float:
-        """Mevcut fiyatı al"""
+        """Anlık fiyat getir"""
         try:
+            self.logger.debug(f"🔍 {symbol} için anlık fiyat alınıyor...")
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'https://api.binance.com/api/v3/ticker/price?symbol={symbol}') as response:
                     if response.status == 200:
                         data = await response.json()
-                        return float(data['price'])
+                        price = float(data['price'])
+                        self.logger.debug(f"✅ {symbol} fiyatı: ${price}")
+                        return price
+            self.logger.error(f"❌ {symbol} fiyatı alınamadı!")
+            return None
         except Exception as e:
-            await self._log(f"Fiyat alma hatası ({symbol}): {str(e)}", "error")
-        return None
+            self.logger.error(f"❌ Fiyat çekme hatası ({symbol}): {e}")
+            return None
 
     async def _untrack_coin(self, chat_id: int, symbol: str):
         """Coin takibini sonlandır"""
@@ -1555,23 +1511,9 @@ Yatırım tavsiyesi değildir."""
             raise
 
     def run(self):
-        """Bot'u asenkron olarak çalıştır"""
-        try:
-            # Event loop oluştur
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Bot'u başlat ve sürekli çalışır durumda tut
-            loop.run_until_complete(self.start())
-            
-        except KeyboardInterrupt:
-            print("\n⚠️ Klavye kesintisi algılandı...")
-            loop.run_until_complete(self.stop())
-        except Exception as e:
-            print(f"❌ Bot çalıştırma hatası: {str(e)}")
-            loop.run_until_complete(self.stop())
-        finally:
-            loop.close()
+        """Run the bot"""
+        print("🤖 Bot başlatılıyor...")
+        self.application.run_polling(drop_pending_updates=True)
 
     async def analyze_signal(self, symbol: str, df: pd.DataFrame) -> Dict:
         """Teknik analiz yap ve sinyal üret"""
@@ -2307,106 +2249,52 @@ Yatırım tavsiyesi değildir."""
         except Exception as e:
             print(f"Hedef kontrol hatası {symbol}: {str(e)}")
 
-    async def _get_market_data(self) -> list:
+    async def _get_market_data(self, interval: str = "4h") -> list:
         """Market verilerini getir ve detaylı analiz yap"""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get('https://api.binance.com/api/v3/ticker/24hr') as response:
-                    if response.status == 200:
-                        data = await response.json()
+                    if response.status != 200:
+                        return []
                         
-                        # USDT çiftlerini filtrele
-                        usdt_pairs = [
-                            item for item in data 
-                            if item['symbol'].endswith('USDT') 
-                            and not item['symbol'].startswith('USDC')
-                            and float(item['quoteVolume']) > 500000  # Minimum 500K USDT hacim
-                            and item['symbol'] not in self.excluded_coins
-                        ]
-                        
-                        # Fırsatları analiz et
-                        opportunities = []
-                        for pair in usdt_pairs:
-                            try:
-                                price = float(pair['lastPrice'])
-                                volume = float(pair['quoteVolume'])
-                                change = float(pair['priceChangePercent'])
-                                high = float(pair['highPrice'])
-                                low = float(pair['lowPrice'])
-                                
-                                # Volatilite hesapla
-                                volatility = ((high - low) / low) * 100
-                                
-                                # Risk seviyesi belirle (1-5 arası)
-                                risk_level = 1
-                                if volatility > 5: risk_level += 1
-                                if abs(change) > 5: risk_level += 1
-                                if volume > 10000000: risk_level += 1
-                                if abs(change) > 10: risk_level += 1
-                                
-                                # Trend gücü (1-5 arası)
-                                trend_strength = 1
-                                if abs(change) > 2: trend_strength += 1
-                                if abs(change) > 5: trend_strength += 1
-                                if volume > 5000000: trend_strength += 1
-                                if volatility > 3: trend_strength += 1
-                                
-                                # Fırsat puanı hesaplama (daha gerçekçi)
-                                volume_score = min(25, (volume / 10000000) * 10)  # Hacim puanı (max 25)
-                                change_score = min(25, abs(change) * 2)  # Değişim puanı (max 25)
-                                volatility_score = min(20, volatility * 2)  # Volatilite puanı (max 20)
-                                trend_score = trend_strength * 4  # Trend puanı (max 20)
-                                risk_score = (6 - risk_level) * 2  # Risk puanı (max 10)
-                                
-                                # Toplam fırsat puanı (0-100)
-                                opportunity_score = volume_score + change_score + volatility_score + trend_score + risk_score
-                                
-                                # Minimum kriterleri kontrol et
-                                if volume >= 500000 and abs(change) >= 0.5:
-                                    opportunities.append({
-                                        'symbol': pair['symbol'],
-                                        'price': price,
-                                        'change_24h': change,
-                                        'volume': volume,
-                                        'high': high,
-                                        'low': low,
-                                        'volatility': volatility,
-                                        'risk_level': risk_level,
-                                        'trend_strength': trend_strength,
-                                        'signal': "LONG 📈" if change > 0 else "SHORT 📉",
-                                        'direction': "ALIŞ" if change > 0 else "SATIŞ",
-                                        'volume_profile': "DÜŞÜK 📊" if volume < 1000000 else 
-                                                        "ORTA 📊📊" if volume < 5000000 else 
-                                                        "YÜKSEK 📊📊📊" if volume < 10000000 else 
-                                                        "ÇOK YÜKSEK 📊📊📊📊",
-                                        'opportunity_score': round(opportunity_score, 1),
-                                        'entry_levels': {
-                                            'strong_buy': low + (high - low) * 0.236,
-                                            'buy': low + (high - low) * 0.382,
-                                            'neutral': low + (high - low) * 0.5
-                                        },
-                                        'stop_loss': {
-                                            'tight': price * 0.99 if change > 0 else price * 1.01,
-                                            'normal': price * 0.98 if change > 0 else price * 1.02,
-                                            'wide': price * 0.97 if change > 0 else price * 1.03
-                                        },
-                                        'take_profit': {
-                                            'conservative': price * 1.02 if change > 0 else price * 0.98,
-                                            'moderate': price * 1.05 if change > 0 else price * 0.95,
-                                            'aggressive': price * 1.10 if change > 0 else price * 0.90
-                                        },
-                                        'long_signal': change > 0
-                                    })
-                            except (ValueError, KeyError) as e:
+                    data = await response.json()
+                    
+                    # USDT çiftlerini filtrele
+                    usdt_pairs = [
+                        item for item in data 
+                        if item['symbol'].endswith('USDT') 
+                        and not item['symbol'].startswith('USDC')
+                        and float(item['quoteVolume']) > 1000000  # Minimum hacmi artırdık
+                        and item['symbol'] not in self.excluded_coins
+                    ]
+                    
+                    opportunities = []
+                    for pair in usdt_pairs:
+                        try:
+                            symbol = pair['symbol']
+                            
+                            # Kline verilerini al
+                            klines = await self._get_klines_data(symbol, interval)
+                            if not klines:
                                 continue
-                        
-                        # Fırsat puanına göre sırala ve en iyi 10 fırsatı al
-                        opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
-                        return opportunities[:10]  # Sadece en iyi 10 fırsat
-                        
-            return []
+                            
+                            # Anlık fiyatı al
+                            current_price = float(pair['lastPrice'])
+                            volume = float(pair['quoteVolume'])
+                            
+                            # Fırsat analizi yap
+                            analysis = await self._analyze_opportunity(symbol, current_price, volume, interval)
+                            if analysis and analysis['opportunity_score'] > 75:  # Minimum skoru artırdık
+                                opportunities.append(analysis)
+                            
+                        except Exception as e:
+                            continue
+                    
+                    # Skorlarına göre sırala ve en iyi 10 tanesini al
+                    opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+                    return opportunities[:10]
+                    
         except Exception as e:
-            print(f"Market veri hatası: {str(e)}")
             return []
 
     async def _log(self, message: str, level: str = "info", notify_user: bool = False, chat_id: Optional[int] = None):
@@ -2616,6 +2504,198 @@ Yatırım tavsiyesi değildir."""
             self.logger.info("Tarama iptal edildi")
         except Exception as e:
             self.logger.error(f"Tarama sırasında hata oluştu: {str(e)}")
+
+    async def _get_klines_data(self, symbol: str, interval: str) -> list:
+        """Belirli bir zaman dilimi için kline verilerini getir"""
+        try:
+            self.logger.debug(f"🔄 {symbol} için {interval} kline verileri alınıyor...")
+            
+            # Interval kontrolü
+            valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d']
+            if interval not in valid_intervals:
+                self.logger.error(f"❌ Geçersiz interval: {interval}")
+                return None
+                
+            async with aiohttp.ClientSession() as session:
+                url = 'https://api.binance.com/api/v3/klines'
+                params = {
+                    'symbol': symbol,
+                    'interval': interval,
+                    'limit': 100
+                }
+                
+                self.logger.debug(f"📡 API isteği: {url}?symbol={symbol}&interval={interval}&limit=100")
+                
+                async with session.get(url, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data and len(data) > 0:
+                            self.logger.debug(f"✅ {symbol} için {len(data)} kline verisi alındı")
+                            return data
+                        else:
+                            self.logger.error(f"❌ {symbol} için veri bulunamadı")
+                            return None
+                    else:
+                        response_text = await response.text()
+                        self.logger.error(f"❌ API Hatası: Status {response.status}, Response: {response_text}")
+                        return None
+                    
+        except aiohttp.ClientError as e:
+            self.logger.error(f"❌ Bağlantı hatası ({symbol}): {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"❌ Beklenmeyen hata ({symbol}): {e}")
+            return None
+
+    async def _analyze_opportunity(self, symbol: str, current_price: float, volume: float, interval: str = "4h") -> dict:
+        """Fırsat analizi yap"""
+        try:
+            # Kline verilerini al
+            klines = await self._get_klines_data(symbol, interval)
+            if not klines or len(klines) < 100:  # En az 100 veri noktası gerekli
+                return None
+
+            # Verileri numpy dizilerine dönüştür
+            closes = np.array([float(k[4]) for k in klines])
+            volumes = np.array([float(k[5]) for k in klines])
+            highs = np.array([float(k[2]) for k in klines])
+            lows = np.array([float(k[3]) for k in klines])
+
+            # RSI hesapla
+            rsi = self._calculate_rsi(closes)
+            
+            # MACD hesapla
+            macd_line, signal_line, hist = self._calculate_macd(closes)
+            
+            # Bollinger Bands hesapla
+            upper, middle, lower = self._calculate_bollinger_bands(closes)
+            
+            # Hacim analizi
+            avg_volume = np.mean(volumes[-20:])
+            volume_surge = volume > (avg_volume * 1.5)
+            
+            # Trend analizi
+            ema20 = self._calculate_ema(closes, 20)
+            ema50 = self._calculate_ema(closes, 50)
+            trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
+            
+            # Destek/Direnç seviyeleri
+            support = float(np.min(lows[-20:]))
+            resistance = float(np.max(highs[-20:]))
+            
+            # Fırsat puanı hesapla (0-100)
+            score = 0
+            
+            # RSI bazlı puan (0-20)
+            if rsi < 30:  # Aşırı satım
+                score += 20
+            elif rsi > 70:  # Aşırı alım
+                score += 5
+            else:
+                score += 10
+                
+            # MACD bazlı puan (0-20)
+            if hist > 0 and hist > signal_line:  # Pozitif ve artıyor
+                score += 20
+            elif hist < 0 and hist < signal_line:  # Negatif ve azalıyor
+                score += 5
+            
+            # Bollinger Bands bazlı puan (0-20)
+            bb_position = (current_price - lower) / (upper - lower) if (upper - lower) != 0 else 0.5
+            if bb_position < 0.2:  # Alt banda yakın
+                score += 20
+            elif bb_position > 0.8:  # Üst banda yakın
+                score += 5
+            
+            # Hacim bazlı puan (0-20)
+            if volume_surge:
+                score += 20
+            else:
+                score += min(20, (volume / avg_volume) * 10)
+                
+            # Trend bazlı puan (0-20)
+            if trend == "YUKARI":
+                score += 20
+            else:
+                score += 5
+                
+            return {
+                'symbol': symbol,
+                'price': current_price,
+                'volume': volume,
+                'rsi': float(rsi),
+                'macd': float(hist),
+                'bb_position': float(bb_position),
+                'trend': trend,
+                'support': support,
+                'resistance': resistance,
+                'volume_surge': volume_surge,
+                'opportunity_score': float(score),
+                'interval': interval,
+                'signal': "🟢 AL" if score > 80 else "🟡 İZLE" if score > 60 else "🔴 BEKLE"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Analiz hatası ({symbol}): {e}")
+            return None
+
+    def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> float:
+        """RSI hesapla"""
+        deltas = np.diff(prices)
+        seed = deltas[:period+1]
+        up = seed[seed >= 0].sum()/period
+        down = -seed[seed < 0].sum()/period
+        rs = up/down if down != 0 else 0
+        rsi = np.zeros_like(prices)
+        rsi[:period] = 100. - 100./(1.+rs)
+
+        for i in range(period, len(prices)):
+            delta = deltas[i-1]
+            if delta > 0:
+                upval = delta
+                downval = 0.
+            else:
+                upval = 0.
+                downval = -delta
+
+            up = (up*(period-1) + upval)/period
+            down = (down*(period-1) + downval)/period
+            rs = up/down if down != 0 else 0
+            rsi[i] = 100. - 100./(1.+rs)
+
+        return rsi[-1]
+
+    def _calculate_macd(self, prices: np.ndarray) -> tuple:
+        """MACD hesapla"""
+        # Numpy array'i pandas Series'e çevir
+        prices_pd = pd.Series(prices)
+        
+        # MACD hesapla
+        exp1 = prices_pd.ewm(span=12, adjust=False).mean()
+        exp2 = prices_pd.ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        hist = macd - signal
+        
+        # Son değerleri al
+        return float(macd.iloc[-1]), float(signal.iloc[-1]), float(hist.iloc[-1])
+
+    def _calculate_bollinger_bands(self, prices: np.ndarray, period: int = 20) -> tuple:
+        """Bollinger Bands hesapla"""
+        sma = np.mean(prices[-period:])
+        std = np.std(prices[-period:])
+        upper = sma + (std * 2)
+        lower = sma - (std * 2)
+        return upper, sma, lower
+
+    def _calculate_ema(self, prices: np.ndarray, period: int) -> np.ndarray:
+        """EMA hesapla"""
+        # Numpy array'i pandas Series'e çevir
+        prices_pd = pd.Series(prices)
+        
+        # EMA hesapla ve numpy array'e geri çevir
+        ema = prices_pd.ewm(span=period, adjust=False).mean()
+        return ema.to_numpy()
 
 if __name__ == '__main__':
     # Önceki bot instance'larını temizle
