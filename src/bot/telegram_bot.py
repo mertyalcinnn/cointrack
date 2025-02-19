@@ -67,16 +67,18 @@ class TelegramBot:
         # Bot state
         self.last_opportunities = []
         
-        # Register handlers
-        self.scan_handler = ScanHandler(self.logger, TrackHandler(self.logger))
+        # Track handler'ı önce oluştur
         self.track_handler = TrackHandler(self.logger)
+        
+        # Scan handler'a track handler'ı geçir
+        self.scan_handler = ScanHandler(self.logger, self.track_handler)
+        
+        # Handler'ları kaydet
         self.application.add_handler(CommandHandler("scan", self.scan_handler.handle))
         self.application.add_handler(CommandHandler("track", self.track_handler.handle))
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("stop", self.stop_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
-        self.application.add_handler(CommandHandler("track", self.track_command))
-        self.application.add_handler(CommandHandler("untrack", self.untrack_command))
         self.application.add_handler(CommandHandler("list", self.list_tracked_command))
         
         # Initialize analyzers
@@ -117,7 +119,6 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("scan", self.scan_handler.handle))
         self.application.add_handler(CommandHandler("track", self.track_handler.handle))
         self.application.add_handler(CommandHandler("help", self.help_command))
-        self.application.add_handler(CommandHandler("untrack", self.untrack_command))
         self.application.add_handler(CommandHandler("list", self.list_tracked_command))
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
         

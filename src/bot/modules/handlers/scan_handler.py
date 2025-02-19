@@ -15,6 +15,7 @@ class ScanHandler:
 
     async def handle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
+            chat_id = update.effective_chat.id
             interval = self._get_interval(context.args)
             if not interval:
                 await self._send_usage_message(update)
@@ -47,8 +48,8 @@ class ScanHandler:
             
             scan_duration = time.time() - start_time
             
-            # Fırsatları track handler'a aktar
-            self.track_handler.update_opportunities(update.effective_chat.id, opportunities)
+            # Önemli: Fırsatları track handler'a aktar
+            self.track_handler.update_opportunities(chat_id, opportunities)
             
             # İlk mesajı güncelle
             await progress_message.edit_text(
@@ -59,16 +60,20 @@ class ScanHandler:
             
             # Fırsatları listele
             messages = self.formatter.format_opportunities(opportunities, interval)
-            for message in messages:
-                await update.message.reply_text(message)
+            for i, message in enumerate(messages, 1):
+                numbered_message = f"Fırsat #{i}:\n{message}"  # Her fırsata numara ekle
+                await update.message.reply_text(numbered_message)
             
-            # Özet mesajı
+            # Özet ve kullanım mesajı
             summary = (
                 f"📈 TARAMA ÖZET ({interval})\n\n"
                 f"🔍 Taranan Coin: {len(ticker_data)}\n"
                 f"✨ Bulunan Fırsat: {len(opportunities)}\n"
                 f"⭐ En Yüksek Skor: {opportunities[0]['opportunity_score']:.1f}\n"
-                f"⏱ Tarama Süresi: {scan_duration:.1f}s"
+                f"⏱ Tarama Süresi: {scan_duration:.1f}s\n\n"
+                f"🎯 Coin takip etmek için:\n"
+                f"/track <numara> komutunu kullanın\n"
+                f"Örnek: /track 1"
             )
             await update.message.reply_text(summary)
 

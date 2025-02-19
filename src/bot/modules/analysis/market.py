@@ -1,6 +1,11 @@
 from ..data.binance_client import BinanceClient
 from .indicators import Indicators
 import numpy as np
+import ccxt.async_support as ccxt
+import pandas as pd
+from typing import Dict, Optional, Tuple
+from datetime import datetime
+import asyncio
 
 class MarketAnalyzer:
     def __init__(self, logger):
@@ -8,6 +13,9 @@ class MarketAnalyzer:
         self.client = BinanceClient()
         self.indicators = Indicators()
         self.excluded_coins = ['USDCUSDT', 'BUSDUSDT']
+        self.exchange = ccxt.binance()
+        self.min_volume = 1000000  # Minimum 24h hacim (USDT)
+        self.min_price = 0.00001   # Minimum fiyat
 
     async def analyze_market(self, ticker_data: list, interval: str) -> list:
         """Tüm market verilerini analiz et"""
@@ -296,4 +304,172 @@ class MarketAnalyzer:
             return "🟡 GÜÇLÜ"
         elif score >= 65:
             return "🟠 ORTA"
-        return "🔴 ZAYIF" 
+        return "🔴 ZAYIF"
+
+    async def analyze_single_coin(self, symbol: str) -> Optional[Dict]:
+        """Tek bir coin için analiz yap"""
+        try:
+            self.logger.debug(f"Analyzing {symbol}...")
+            
+            # CCXT ile coin verilerini al
+            ticker = await self.exchange.fetch_ticker(symbol)
+            if not ticker:
+                self.logger.error(f"No ticker data for {symbol}")
+                return None
+                
+            # OHLCV verilerini al
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, '1h', limit=100)
+            if not ohlcv or len(ohlcv) < 100:
+                self.logger.error(f"Insufficient OHLCV data for {symbol}")
+                return None
+                
+            # Verileri numpy dizilerine dönüştür
+            closes = np.array([float(candle[4]) for candle in ohlcv])
+            volumes = np.array([float(candle[5]) for candle in ohlcv])
+            
+            # Teknik indikatörleri hesapla
+            rsi = self._calculate_rsi(closes)
+            macd, signal, hist = self._calculate_macd(closes)
+            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(closes)
+            
+            # Hacim analizi
+            avg_volume = np.mean(volumes[-20:])
+            current_volume = float(ticker['quoteVolume']) if 'quoteVolume' in ticker else 0
+            volume_surge = current_volume > (avg_volume * 1.5)
+            
+            # Trend analizi
+            ema20 = self._calculate_ema(closes, 20)
+            ema50 = self._calculate_ema(closes, 50)
+            trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
+            
+            # Fırsat puanı hesapla
+            opportunity_score = self._calculate_opportunity_score(
+                rsi[-1],
+                hist[-1],
+                volume_surge,
+                trend,
+                current_volume,
+                avg_volume
+            )
+            
+            # Sinyal belirle
+            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
+            
+            analysis_result = {
+                'symbol': symbol,
+                'price': float(ticker['last']),
+                'volume': current_volume,
+                'rsi': float(rsi[-1]),
+                'macd': float(hist[-1]),
+                'trend': trend,
+                'volume_surge': volume_surge,
+                'opportunity_score': float(opportunity_score),
+                'signal': signal,
+                'bb_upper': float(bb_upper),
+                'bb_lower': float(bb_lower),
+                'ema20': float(ema20[-1]),
+                'ema50': float(ema50[-1])
+            }
+            
+            self.logger.debug(f"Analysis completed for {symbol}")
+            return analysis_result
+            
+        except Exception as e:
+            self.logger.error(f"Single coin analysis error ({symbol}): {str(e)}")
+            return None
+        finally:
+            # CCXT exchange'i kapat
+            await self.exchange.close()
+
+    def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> np.ndarray:
+        """RSI hesapla"""
+        deltas = np.diff(prices)
+        seed = deltas[:period+1]
+        up = seed[seed >= 0].sum()/period
+        down = -seed[seed < 0].sum()/period
+        rs = up/down if down != 0 else 0
+        rsi = np.zeros_like(prices)
+        rsi[:period] = 100. - 100./(1.+rs)
+
+        for i in range(period, len(prices)):
+            delta = deltas[i-1]
+            if delta > 0:
+                upval = delta
+                downval = 0.
+            else:
+                upval = 0.
+                downval = -delta
+
+            up = (up*(period-1) + upval)/period
+            down = (down*(period-1) + downval)/period
+            rs = up/down if down != 0 else 0
+            rsi[i] = 100. - 100./(1.+rs)
+
+        return rsi
+
+    def _calculate_macd(self, prices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """MACD hesapla"""
+        exp1 = pd.Series(prices).ewm(span=12, adjust=False).mean()
+        exp2 = pd.Series(prices).ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        hist = macd - signal
+        return macd.values, signal.values, hist.values
+
+    def _calculate_bollinger_bands(self, prices: np.ndarray, period: int = 20) -> Tuple[float, float, float]:
+        """Bollinger Bands hesapla"""
+        sma = np.mean(prices[-period:])
+        std = np.std(prices[-period:])
+        upper = sma + (std * 2)
+        lower = sma - (std * 2)
+        return upper, sma, lower
+
+    def _calculate_ema(self, prices: np.ndarray, period: int) -> np.ndarray:
+        """EMA hesapla"""
+        return pd.Series(prices).ewm(span=period, adjust=False).mean().values
+
+    def _calculate_opportunity_score(self, rsi: float, macd: float, 
+                                   volume_surge: bool, trend: str,
+                                   current_volume: float, avg_volume: float) -> float:
+        """Fırsat puanı hesapla (0-100)"""
+        score = 0
+        
+        # RSI bazlı puan (0-30)
+        if rsi < 30:  # Aşırı satım
+            score += 30
+        elif rsi > 70:  # Aşırı alım
+            score += 10
+        else:
+            score += 20
+            
+        # MACD bazlı puan (0-20)
+        if macd > 0:
+            score += 20
+        elif macd < 0:
+            score += 5
+        
+        # Hacim bazlı puan (0-30)
+        if volume_surge:
+            score += 30
+        else:
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+            score += min(30, volume_ratio * 15)
+            
+        # Trend bazlı puan (0-20)
+        if trend == "YUKARI":
+            score += 20
+        else:
+            score += 5
+            
+        return min(100, score)
+
+    def _determine_signal(self, score: float, rsi: float, trend: str) -> str:
+        """Sinyal belirle"""
+        if score >= 80:
+            return "🟢 GÜÇLÜ AL"
+        elif score >= 65:
+            return "🟡 AL"
+        elif score >= 50:
+            return "⚪ İZLE"
+        else:
+            return "🔴 BEKLE" 
