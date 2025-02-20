@@ -58,6 +58,9 @@ class MarketAnalyzer:
             'STRONG_SELL': {'min_score': 0, 'emoji': '⛔'}
         }
 
+        # Geçerli sembolleri al
+        self._init_valid_symbols()
+
     async def _init_valid_symbols(self):
         """Geçerli USDT sembollerini asenkron olarak al"""
         try:
@@ -79,9 +82,6 @@ class MarketAnalyzer:
     async def analyze_market(self, ticker_data: list, interval: str = '4h') -> list:
         """Tüm market analizi"""
         try:
-            # Önce geçerli sembolleri yükle
-            await self._init_valid_symbols()
-            
             opportunities = []
             
             # Sayaçları sıfırla
@@ -158,6 +158,9 @@ class MarketAnalyzer:
                                 bb_upper, bb_lower, current_price, opportunity_score, volume_surge
                             )
                             
+                            # Sinyal belirle
+                            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
+                            
                             opportunity = {
                                 'symbol': symbol,
                                 'price': current_price,
@@ -167,18 +170,18 @@ class MarketAnalyzer:
                                 'trend': trend,
                                 'volume_surge': volume_surge,
                                 'opportunity_score': float(opportunity_score),
-                                'signal': self._format_position_signal(position_rec['position']),
-                                'ema20': float(ema20[-1]),
-                                'ema50': float(ema50[-1]),
-                                'bb_upper': float(bb_upper),
-                                'bb_middle': float(bb_middle),
-                                'bb_lower': float(bb_lower),
+                                'signal': signal,
                                 'position_recommendation': position_rec['position'],
                                 'position_confidence': position_rec['confidence'],
                                 'recommended_leverage': position_rec['leverage'],
                                 'risk_level': position_rec['risk_level'],
                                 'analysis_reasons': position_rec['reasons'],
-                                'score': position_rec['score']
+                                'score': position_rec['score'],
+                                'ema20': float(ema20[-1]),
+                                'ema50': float(ema50[-1]),
+                                'bb_upper': float(bb_upper),
+                                'bb_middle': float(bb_middle),
+                                'bb_lower': float(bb_lower)
                             }
                             
                             opportunities.append(opportunity)
