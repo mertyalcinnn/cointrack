@@ -59,9 +59,9 @@ class ScanHandler:
             )
             
             # Fırsatları listele
-            messages = self.formatter.format_opportunities(opportunities, interval)
+            messages = self._format_opportunities(opportunities, interval)
             for i, message in enumerate(messages, 1):
-                numbered_message = f"Fırsat #{i}:\n{message}"  # Her fırsata numara ekle
+                numbered_message = f"Fırsat #{i}:\n{message}"
                 await update.message.reply_text(numbered_message)
             
             # Özet ve kullanım mesajı
@@ -80,6 +80,51 @@ class ScanHandler:
         except Exception as e:
             self.logger.error(f"Scan error: {e}")
             await update.message.reply_text(f"❌ Tarama hatası: {str(e)}")
+
+    def _format_opportunities(self, opportunities: list, interval: str) -> list:
+        """Fırsatları formatla"""
+        messages = []
+        for opp in opportunities:
+            # EMA Sinyalleri
+            ema_signal = "📈 YUKARI" if opp['ema20'] > opp['ema50'] else "📉 AŞAĞI"
+            ema_cross = abs(opp['ema20'] - opp['ema50']) / opp['ema50'] * 100
+            
+            # Bollinger Bands Analizi
+            bb_position = (opp['price'] - opp['bb_lower']) / (opp['bb_upper'] - opp['bb_lower']) * 100
+            bb_signal = self._get_bb_signal(bb_position)
+            
+            message = (
+                f"💰 {opp['symbol']}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💵 Fiyat: ${opp['price']:.4f}\n"
+                f"📊 RSI: {opp['rsi']:.1f}\n"
+                f"📈 Trend: {opp['trend']}\n"
+                f"⚡ Hacim: ${opp['volume']:,.0f}\n"
+                f"📊 Hacim Artışı: {'✅' if opp['volume_surge'] else '❌'}\n\n"
+                f"📈 TEKNİK ANALİZ:\n"
+                f"• EMA Trend: {ema_signal} ({ema_cross:.1f}%)\n"
+                f"• BB Pozisyon: {bb_signal} ({bb_position:.1f}%)\n"
+                f"• MACD: {opp['macd']:.4f}\n"
+                f"• RSI: {opp['rsi']:.1f}\n\n"
+                f"🎯 Sinyal: {opp['signal']}\n"
+                f"⭐ Fırsat Puanı: {opp['opportunity_score']:.1f}/100\n"
+                f"━━━━━━━━━━━━━━━━"
+            )
+            messages.append(message)
+        return messages
+
+    def _get_bb_signal(self, bb_position: float) -> str:
+        """Bollinger Bands sinyali belirle"""
+        if bb_position <= 0:
+            return "💚 GÜÇLÜ ALIM"
+        elif bb_position <= 20:
+            return "💛 ALIM"
+        elif bb_position >= 100:
+            return "🔴 GÜÇLÜ SATIŞ"
+        elif bb_position >= 80:
+            return "🟡 SATIŞ"
+        else:
+            return "⚪ NÖTR"
 
     def _get_interval(self, args):
         """Tarama aralığını belirle"""

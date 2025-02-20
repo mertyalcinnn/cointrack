@@ -6,380 +6,203 @@ import pandas as pd
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import asyncio
+from .advanced_analysis import AdvancedAnalyzer, SignalStrength
 
 class MarketAnalyzer:
     def __init__(self, logger):
         self.logger = logger
         self.client = BinanceClient()
         self.indicators = Indicators()
-        self.excluded_coins = ['USDCUSDT', 'BUSDUSDT']
         self.exchange = ccxt.binance()
-        self.min_volume = 1000000  # Minimum 24h hacim (USDT)
-        self.min_price = 0.00001   # Minimum fiyat
+        self.min_volume = 500000  # Minimum hacmi düşürdük
+        self.min_price = 0.00001
+        self.advanced_analyzer = AdvancedAnalyzer()
+        
+        # Debug için sayaçlar
+        self.analysis_stats = {
+            'total_coins': 0,
+            'valid_pairs': 0,
+            'price_filtered': 0,
+            'volume_filtered': 0,
+            'analysis_failed': 0,
+            'analysis_success': 0
+        }
+        
+        # Geçerli sembolleri başlangıçta boş bırak
+        self.valid_symbols = set()
+        
+        # Kaldıraç limitleri
+        self.max_leverage = 20  # Maksimum kaldıraç
+        self.risk_levels = {
+            'LOW': {'leverage': 2, 'min_score': 40},
+            'MEDIUM': {'leverage': 5, 'min_score': 60},
+            'HIGH': {'leverage': 10, 'min_score': 80},
+            'EXTREME': {'leverage': 20, 'min_score': 90}
+        }
 
-    async def analyze_market(self, ticker_data: list, interval: str) -> list:
-        """Tüm market verilerini analiz et"""
+    async def _init_valid_symbols(self):
+        """Geçerli USDT sembollerini asenkron olarak al"""
         try:
-            # USDT çiftlerini filtrele
-            usdt_pairs = [
-                item for item in ticker_data 
-                if item['symbol'].endswith('USDT') 
-                and not item['symbol'].startswith('USDC')
-                and float(item['quoteVolume']) > 1000000
-                and item['symbol'] not in self.excluded_coins
-            ]
-            
-            total_pairs = len(usdt_pairs)
-            self.logger.info(f"🔍 Toplam {total_pairs} coin taranacak...")
+            markets = await self.exchange.load_markets()
+            self.valid_symbols = {
+                symbol for symbol in markets.keys() 
+                if symbol.endswith('USDT') and 
+                markets[symbol].get('active', False)
+            }
+            self.logger.info(f"Loaded {len(self.valid_symbols)} valid USDT pairs")
+        except Exception as e:
+            self.logger.error(f"Error loading markets: {e}")
+            # Varsayılan olarak popüler çiftleri ekle
+            self.valid_symbols = {
+                'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'ADA/USDT', 'XRP/USDT',
+                'DOGE/USDT', 'DOT/USDT', 'UNI/USDT', 'SOL/USDT', 'LINK/USDT'
+            }
+
+    async def analyze_market(self, ticker_data: list, interval: str = '4h') -> list:
+        """Tüm market analizi"""
+        try:
+            # Önce geçerli sembolleri yükle
+            await self._init_valid_symbols()
             
             opportunities = []
-            for index, pair in enumerate(usdt_pairs, 1):
+            
+            # Sayaçları sıfırla
+            self.analysis_stats = {key: 0 for key in self.analysis_stats}
+            self.analysis_stats['total_coins'] = len(ticker_data)
+            
+            self.logger.info(f"🔍 Toplam {len(ticker_data)} coin taranıyor...")
+            
+            for ticker in ticker_data:
                 try:
-                    symbol = pair['symbol']
-                    progress = (index / total_pairs) * 100
+                    symbol = ticker['symbol']
                     
-                    if index % 10 == 0:  # Her 10 coinde bir ilerleme göster
-                        self.logger.info(f"⏳ İlerleme: %{progress:.1f} ({index}/{total_pairs}) - Son taranan: {symbol}")
+                    # Sadece USDT çiftlerini analiz et
+                    if not symbol.endswith('USDT'):
+                        continue
+                    self.analysis_stats['valid_pairs'] += 1
                     
-                    analysis = await self.analyze_symbol(pair, interval)
-                    if analysis and analysis['opportunity_score'] > 75:
-                        opportunities.append(analysis)
-                        self.logger.info(f"✨ Fırsat bulundu: {symbol} - Skor: {analysis['opportunity_score']:.1f}")
+                    # Minimum fiyat kontrolü
+                    current_price = float(ticker['lastPrice'])
+                    if current_price < self.min_price:
+                        self.analysis_stats['price_filtered'] += 1
+                        self.logger.debug(f"💰 {symbol} düşük fiyat nedeniyle atlandı: {current_price}")
+                        continue
                         
+                    # Minimum hacim kontrolü
+                    current_volume = float(ticker['quoteVolume'])
+                    if current_volume < self.min_volume:
+                        self.analysis_stats['volume_filtered'] += 1
+                        self.logger.debug(f"📊 {symbol} düşük hacim nedeniyle atlandı: {current_volume:.2f} USDT")
+                        continue
+
+                    # OHLCV verilerini al
+                    try:
+                        ohlcv = await self.exchange.fetch_ohlcv(symbol, interval, limit=100)
+                        if not ohlcv or len(ohlcv) < 100:
+                            self.analysis_stats['analysis_failed'] += 1
+                            self.logger.debug(f"📈 {symbol} yetersiz OHLCV verisi")
+                            continue
+                            
+                        self.logger.debug(f"✅ {symbol} analiz ediliyor...")
+                        
+                        # Verileri numpy dizilerine dönüştür
+                        closes = np.array([float(candle[4]) for candle in ohlcv])
+                        volumes = np.array([float(candle[5]) for candle in ohlcv])
+                        
+                        # Teknik indikatörleri hesapla
+                        rsi = self._calculate_rsi(closes)
+                        macd, signal, hist = self._calculate_macd(closes)
+                        bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(closes)
+                        ema20 = self._calculate_ema(closes, 20)
+                        ema50 = self._calculate_ema(closes, 50)
+                        
+                        # Hacim analizi
+                        avg_volume = np.mean(volumes[-20:])
+                        volume_surge = current_volume > (avg_volume * 1.2)  # Hacim artış eşiğini düşürdük
+                        
+                        # Trend analizi
+                        trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
+                        
+                        # Fırsat puanı hesapla
+                        opportunity_score = self._calculate_opportunity_score(
+                            rsi[-1],
+                            hist[-1],
+                            volume_surge,
+                            trend,
+                            current_volume,
+                            avg_volume
+                        )
+                        
+                        # Fırsat eşiğini düşürdük
+                        if opportunity_score >= 40:  # 50'den 40'a düşürdük
+                            position_rec = self._analyze_position_recommendation(
+                                rsi[-1], hist[-1], ema20[-1], ema50[-1],
+                                bb_upper, bb_lower, current_price, opportunity_score
+                            )
+                            
+                            opportunity = {
+                                'symbol': symbol,
+                                'price': current_price,
+                                'volume': current_volume,
+                                'rsi': float(rsi[-1]),
+                                'macd': float(hist[-1]),
+                                'trend': trend,
+                                'volume_surge': volume_surge,
+                                'opportunity_score': float(opportunity_score),
+                                'signal': self._determine_signal(opportunity_score, rsi[-1], trend),
+                                'ema20': float(ema20[-1]),
+                                'ema50': float(ema50[-1]),
+                                'bb_upper': float(bb_upper),
+                                'bb_middle': float(bb_middle),
+                                'bb_lower': float(bb_lower),
+                                'position_recommendation': position_rec['position'],
+                                'position_confidence': position_rec['confidence'],
+                                'recommended_leverage': position_rec['leverage'],
+                                'risk_level': position_rec['risk_level'],
+                                'analysis_reasons': position_rec['reasons']
+                            }
+                            
+                            opportunities.append(opportunity)
+                            self.analysis_stats['analysis_success'] += 1
+                            self.logger.debug(f"💎 {symbol} fırsat bulundu! Skor: {opportunity_score:.1f}")
+                        
+                    except Exception as e:
+                        self.analysis_stats['analysis_failed'] += 1
+                        self.logger.debug(f"❌ {symbol} analiz hatası: {str(e)}")
+                        continue
+
                 except Exception as e:
+                    self.analysis_stats['analysis_failed'] += 1
+                    self.logger.debug(f"❌ {symbol} işleme hatası: {str(e)}")
                     continue
-
-            self.logger.info(f"✅ Tarama tamamlandı! {len(opportunities)} fırsat bulundu.")
-            return sorted(opportunities, key=lambda x: x['opportunity_score'], reverse=True)[:10]
+            
+            # Analiz istatistiklerini logla
+            self.logger.info("\n📊 TARAMA İSTATİSTİKLERİ:")
+            self.logger.info(f"📌 Toplam Coin: {self.analysis_stats['total_coins']}")
+            self.logger.info(f"✅ Geçerli USDT Çiftleri: {self.analysis_stats['valid_pairs']}")
+            self.logger.info(f"💰 Fiyat Filtresi: {self.analysis_stats['price_filtered']}")
+            self.logger.info(f"📊 Hacim Filtresi: {self.analysis_stats['volume_filtered']}")
+            self.logger.info(f"✨ Başarılı Analiz: {self.analysis_stats['analysis_success']}")
+            self.logger.info(f"❌ Başarısız Analiz: {self.analysis_stats['analysis_failed']}")
+            
+            # Fırsatları puana göre sırala
+            opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+            
+            if opportunities:
+                self.logger.info(f"🎯 Bulunan Fırsat Sayısı: {len(opportunities)}")
+            else:
+                self.logger.info("❌ Fırsat bulunamadı")
+            
+            return opportunities[:10]  # En iyi 10 fırsatı döndür
             
         except Exception as e:
-            self.logger.error(f"Market analiz hatası: {e}")
+            self.logger.error(f"Market analysis error: {str(e)}")
             return []
-
-    async def analyze_symbol(self, pair: dict, interval: str) -> dict:
-        """Tek bir sembol için analiz yap"""
-        try:
-            symbol = pair['symbol']
-            current_price = float(pair['lastPrice'])
-            volume = float(pair['quoteVolume'])
-
-            # Kline verilerini al
-            klines = await self.client.get_klines(symbol, interval)
-            if not klines or len(klines) < 100:
-                return None
-
-            # Verileri numpy dizilerine dönüştür
-            closes = np.array([float(k[4]) for k in klines])
-            highs = np.array([float(k[2]) for k in klines])
-            lows = np.array([float(k[3]) for k in klines])
-            volumes = np.array([float(k[5]) for k in klines])
-            
-            # Temel göstergeleri hesapla
-            rsi = self.indicators.rsi(closes)
-            macd, signal = self.indicators.macd(closes)
-            ema9 = self.indicators.ema(closes, 9)
-            ema21 = self.indicators.ema(closes, 21)
-            ema50 = self.indicators.ema(closes, 50)
-            ema200 = self.indicators.ema(closes, 200)
-
-            # Destek ve direnç seviyeleri
-            support = self._find_support(lows[-20:])
-            resistance = self._find_resistance(highs[-20:])
-
-            # Hacim analizi
-            volume_sma = np.mean(volumes[-20:])
-            volume_surge = volume > (volume_sma * 1.5)
-            
-            # Trend analizi
-            short_trend = "YUKARI" if ema9 > ema21 else "AŞAĞI"
-            main_trend = "YUKARI" if ema50 > ema200 else "AŞAĞI"
-            
-            # Strateji seçimi ve sinyal üretimi
-            if interval == "15m":
-                strategy = self._analyze_short_term(
-                    current_price, rsi, macd, signal,
-                    ema9, ema21, volume_surge, support, resistance
-                )
-            else:  # 4h
-                strategy = self._analyze_long_term(
-                    current_price, rsi, macd, signal,
-                    ema50, ema200, volume_surge, support, resistance
-                )
-
-            return {
-                'symbol': symbol,
-                'price': current_price,
-                'volume': volume,
-                'rsi': float(rsi),
-                'macd': float(macd),
-                'short_trend': short_trend,
-                'main_trend': main_trend,
-                'support': float(support),
-                'resistance': float(resistance),
-                'volume_surge': volume_surge,
-                'opportunity_score': strategy['score'],
-                'signal': strategy['signal'],
-                'position': strategy['position'],
-                'stop_loss': strategy['stop_loss'],
-                'take_profit': strategy['take_profit'],
-                'risk_reward': strategy['risk_reward'],
-                'score_details': strategy['score_details']
-            }
-
-        except Exception as e:
-            self.logger.error(f"Symbol analiz hatası ({symbol}): {e}")
-            return None
-
-    def _analyze_short_term(self, price, rsi, macd, signal, ema9, ema21, volume_surge, support, resistance):
-        """15 dakikalık strateji - Puan detaylı hesaplanıyor"""
-        score = 0
-        position = "BEKLE"
-        stop_loss = 0
-        take_profit = 0
-        
-        # Trend Puanı (0-30)
-        trend_score = 0
-        if price > ema9 > ema21:  # Yükseliş trendi
-            trend_score = 30
-        elif price < ema9 < ema21:  # Düşüş trendi
-            trend_score = 25
-        elif price > ema21:  # Zayıf yükseliş
-            trend_score = 15
-        elif price < ema21:  # Zayıf düşüş
-            trend_score = 10
-        
-        # RSI Puanı (0-25)
-        rsi_score = 0
-        if 30 <= rsi <= 70:  # İdeal bölge
-            rsi_score = 25
-        elif 20 <= rsi < 30 or 70 < rsi <= 80:  # Dikkat bölgesi
-            rsi_score = 15
-        elif rsi < 20 or rsi > 80:  # Aşırı bölge
-            rsi_score = 5
-            
-        # MACD Puanı (0-25)
-        macd_score = 0
-        if macd > signal and macd > 0:  # Güçlü alım
-            macd_score = 25
-        elif macd > signal and macd < 0:  # Zayıf alım
-            macd_score = 15
-        elif macd < signal and macd < 0:  # Güçlü satım
-            macd_score = 20
-        elif macd < signal and macd > 0:  # Zayıf satım
-            macd_score = 10
-            
-        # Hacim Puanı (0-20)
-        volume_score = 20 if volume_surge else 10
-        
-        # Toplam Puan
-        total_score = trend_score + rsi_score + macd_score + volume_score
-        
-        # Pozisyon Belirleme
-        if total_score >= 75:
-            if price > ema9 > ema21:  # LONG sinyali
-                position = "LONG"
-                stop_loss = min(support, price * 0.99)  # %1 stop loss
-                take_profit = price + (price - stop_loss) * 2  # 1:2 risk/ödül
-            elif price < ema9 < ema21:  # SHORT sinyali
-                position = "SHORT"
-                stop_loss = max(resistance, price * 1.01)  # %1 stop loss
-                take_profit = price - (stop_loss - price) * 2  # 1:2 risk/ödül
-        
-        self.logger.debug(
-            f"15m Puan Detayı:\n"
-            f"Trend: {trend_score}/30\n"
-            f"RSI: {rsi_score}/25\n"
-            f"MACD: {macd_score}/25\n"
-            f"Hacim: {volume_score}/20\n"
-            f"Toplam: {total_score}/100"
-        )
-        
-        return {
-            'score': total_score,
-            'signal': self._get_signal_emoji(total_score),
-            'position': position,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'risk_reward': "1:2" if total_score > 75 else "N/A",
-            'score_details': {
-                'trend': trend_score,
-                'rsi': rsi_score,
-                'macd': macd_score,
-                'volume': volume_score
-            }
-        }
-
-    def _analyze_long_term(self, price, rsi, macd, signal, ema50, ema200, volume_surge, support, resistance):
-        """4 saatlik strateji - Puan detaylı hesaplanıyor"""
-        score = 0
-        position = "BEKLE"
-        stop_loss = 0
-        take_profit = 0
-        
-        # Trend Puanı (0-30)
-        trend_score = 0
-        if price > ema50 > ema200:  # Güçlü yükseliş trendi
-            trend_score = 30
-        elif price < ema50 < ema200:  # Güçlü düşüş trendi
-            trend_score = 25
-        elif ema50 > ema200:  # Zayıf yükseliş
-            trend_score = 15
-        elif ema50 < ema200:  # Zayıf düşüş
-            trend_score = 10
-        
-        # RSI Puanı (0-25)
-        rsi_score = 0
-        if 40 <= rsi <= 60:  # İdeal bölge
-            rsi_score = 25
-        elif 30 <= rsi < 40 or 60 < rsi <= 70:  # Dikkat bölgesi
-            rsi_score = 15
-        elif rsi < 30 or rsi > 70:  # Aşırı bölge
-            rsi_score = 5
-            
-        # MACD Puanı (0-25)
-        macd_score = 0
-        if macd > signal and macd > 0:  # Güçlü alım
-            macd_score = 25
-        elif macd > signal and macd < 0:  # Zayıf alım
-            macd_score = 15
-        elif macd < signal and macd < 0:  # Güçlü satım
-            macd_score = 20
-        elif macd < signal and macd > 0:  # Zayıf satım
-            macd_score = 10
-            
-        # Hacim Puanı (0-20)
-        volume_score = 20 if volume_surge else 10
-        
-        # Toplam Puan
-        total_score = trend_score + rsi_score + macd_score + volume_score
-        
-        # Pozisyon Belirleme
-        if total_score >= 75:
-            if price > ema50 > ema200:  # LONG sinyali
-                position = "LONG"
-                stop_loss = min(support, price * 0.98)  # %2 stop loss
-                take_profit = price + (price - stop_loss) * 3  # 1:3 risk/ödül
-            elif price < ema50 < ema200:  # SHORT sinyali
-                position = "SHORT"
-                stop_loss = max(resistance, price * 1.02)  # %2 stop loss
-                take_profit = price - (stop_loss - price) * 3  # 1:3 risk/ödül
-        
-        self.logger.debug(
-            f"4h Puan Detayı:\n"
-            f"Trend: {trend_score}/30\n"
-            f"RSI: {rsi_score}/25\n"
-            f"MACD: {macd_score}/25\n"
-            f"Hacim: {volume_score}/20\n"
-            f"Toplam: {total_score}/100"
-        )
-        
-        return {
-            'score': total_score,
-            'signal': self._get_signal_emoji(total_score),
-            'position': position,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'risk_reward': "1:3" if total_score > 75 else "N/A",
-            'score_details': {
-                'trend': trend_score,
-                'rsi': rsi_score,
-                'macd': macd_score,
-                'volume': volume_score
-            }
-        }
-
-    def _find_support(self, lows: np.ndarray) -> float:
-        """En yakın destek seviyesini bul"""
-        return np.min(lows)
-
-    def _find_resistance(self, highs: np.ndarray) -> float:
-        """En yakın direnç seviyesini bul"""
-        return np.max(highs)
-
-    def _get_signal_emoji(self, score: float) -> str:
-        """Skor bazlı sinyal emojisi"""
-        if score >= 85:
-            return "🟢 ÇOK GÜÇLÜ"
-        elif score >= 75:
-            return "🟡 GÜÇLÜ"
-        elif score >= 65:
-            return "🟠 ORTA"
-        return "🔴 ZAYIF"
-
-    async def analyze_single_coin(self, symbol: str) -> Optional[Dict]:
-        """Tek bir coin için analiz yap"""
-        try:
-            self.logger.debug(f"Analyzing {symbol}...")
-            
-            # CCXT ile coin verilerini al
-            ticker = await self.exchange.fetch_ticker(symbol)
-            if not ticker:
-                self.logger.error(f"No ticker data for {symbol}")
-                return None
-                
-            # OHLCV verilerini al
-            ohlcv = await self.exchange.fetch_ohlcv(symbol, '1h', limit=100)
-            if not ohlcv or len(ohlcv) < 100:
-                self.logger.error(f"Insufficient OHLCV data for {symbol}")
-                return None
-                
-            # Verileri numpy dizilerine dönüştür
-            closes = np.array([float(candle[4]) for candle in ohlcv])
-            volumes = np.array([float(candle[5]) for candle in ohlcv])
-            
-            # Teknik indikatörleri hesapla
-            rsi = self._calculate_rsi(closes)
-            macd, signal, hist = self._calculate_macd(closes)
-            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(closes)
-            
-            # Hacim analizi
-            avg_volume = np.mean(volumes[-20:])
-            current_volume = float(ticker['quoteVolume']) if 'quoteVolume' in ticker else 0
-            volume_surge = current_volume > (avg_volume * 1.5)
-            
-            # Trend analizi
-            ema20 = self._calculate_ema(closes, 20)
-            ema50 = self._calculate_ema(closes, 50)
-            trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
-            
-            # Fırsat puanı hesapla
-            opportunity_score = self._calculate_opportunity_score(
-                rsi[-1],
-                hist[-1],
-                volume_surge,
-                trend,
-                current_volume,
-                avg_volume
-            )
-            
-            # Sinyal belirle
-            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
-            
-            analysis_result = {
-                'symbol': symbol,
-                'price': float(ticker['last']),
-                'volume': current_volume,
-                'rsi': float(rsi[-1]),
-                'macd': float(hist[-1]),
-                'trend': trend,
-                'volume_surge': volume_surge,
-                'opportunity_score': float(opportunity_score),
-                'signal': signal,
-                'bb_upper': float(bb_upper),
-                'bb_lower': float(bb_lower),
-                'ema20': float(ema20[-1]),
-                'ema50': float(ema50[-1])
-            }
-            
-            self.logger.debug(f"Analysis completed for {symbol}")
-            return analysis_result
-            
-        except Exception as e:
-            self.logger.error(f"Single coin analysis error ({symbol}): {str(e)}")
-            return None
         finally:
-            # CCXT exchange'i kapat
-            await self.exchange.close()
+            try:
+                await self.exchange.close()
+            except:
+                pass
 
     def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> np.ndarray:
         """RSI hesapla"""
@@ -459,7 +282,7 @@ class MarketAnalyzer:
         if trend == "YUKARI":
             score += 20
         else:
-            score += 5
+            score += 10  # Düşüş trendinde de puan ver
             
         return min(100, score)
 
@@ -472,4 +295,219 @@ class MarketAnalyzer:
         elif score >= 50:
             return "⚪ İZLE"
         else:
-            return "🔴 BEKLE" 
+            return "🔴 BEKLE"
+
+    async def analyze_single_coin(self, symbol: str) -> Optional[Dict]:
+        """Tek bir coin için analiz yap"""
+        try:
+            # Sembol formatını düzelt
+            if '/' not in symbol:
+                symbol = f"{symbol[:-4]}/USDT" if symbol.endswith('USDT') else f"{symbol}/USDT"
+
+            # Geçerli sembolleri kontrol et ve gerekirse yeniden yükle
+            if not self.valid_symbols:
+                await self._init_valid_symbols()
+
+            if symbol not in self.valid_symbols:
+                self.logger.error(f"Invalid symbol: {symbol}")
+                return None
+
+            self.logger.debug(f"Analyzing {symbol}...")
+            
+            # OHLCV verilerini al
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, '1h', limit=100)
+            if not ohlcv or len(ohlcv) < 100:
+                self.logger.error(f"Insufficient OHLCV data for {symbol}")
+                return None
+                
+            # Verileri numpy dizilerine dönüştür
+            closes = np.array([float(candle[4]) for candle in ohlcv])
+            volumes = np.array([float(candle[5]) for candle in ohlcv])
+            
+            # Teknik indikatörleri hesapla
+            rsi = self._calculate_rsi(closes)
+            macd, signal, hist = self._calculate_macd(closes)
+            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(closes)
+            
+            # Hacim analizi
+            avg_volume = np.mean(volumes[-20:])
+            current_volume = float(ohlcv[-1][5]) if len(ohlcv) > 0 else 0
+            volume_surge = current_volume > (avg_volume * 1.5)
+            
+            # Trend analizi
+            ema20 = self._calculate_ema(closes, 20)
+            ema50 = self._calculate_ema(closes, 50)
+            trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
+            
+            # Fırsat puanı hesapla
+            opportunity_score = self._calculate_opportunity_score(
+                rsi[-1],
+                hist[-1],
+                volume_surge,
+                trend,
+                current_volume,
+                avg_volume
+            )
+            
+            # Sinyal belirle
+            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
+            
+            analysis_result = {
+                'symbol': symbol,
+                'price': float(ohlcv[-1][4]),
+                'volume': current_volume,
+                'rsi': float(rsi[-1]),
+                'macd': float(hist[-1]),
+                'trend': trend,
+                'volume_surge': volume_surge,
+                'opportunity_score': float(opportunity_score),
+                'signal': signal,
+                'bb_upper': float(bb_upper),
+                'bb_lower': float(bb_lower),
+                'ema20': float(ema20[-1]),
+                'ema50': float(ema50[-1])
+            }
+            
+            self.logger.debug(f"Analysis completed for {symbol}")
+            return analysis_result
+            
+        except Exception as e:
+            self.logger.error(f"Single coin analysis error ({symbol}): {str(e)}")
+            return None
+        finally:
+            try:
+                await self.exchange.close()
+            except:
+                pass
+
+    def _calculate_atr(self, prices: np.ndarray, period: int = 14) -> float:
+        """ATR (Average True Range) hesapla"""
+        high = prices
+        low = prices
+        close = prices
+        
+        tr1 = np.abs(high[1:] - low[1:])
+        tr2 = np.abs(high[1:] - close[:-1])
+        tr3 = np.abs(low[1:] - close[:-1])
+        
+        tr = np.maximum(np.maximum(tr1, tr2), tr3)
+        atr = np.mean(tr[-period:])
+        
+        return float(atr)
+
+    def _analyze_position_recommendation(self, 
+                                       rsi: float, 
+                                       macd: float, 
+                                       ema20: float,
+                                       ema50: float,
+                                       bb_upper: float,
+                                       bb_lower: float,
+                                       current_price: float,
+                                       opportunity_score: float) -> dict:
+        """Long/Short pozisyon önerisi analizi"""
+        long_points = 0
+        short_points = 0
+        reasons = []
+        
+        # RSI Analizi
+        if rsi < 30:
+            long_points += 2
+            reasons.append("RSI aşırı satım bölgesinde (LONG)")
+        elif rsi > 70:
+            short_points += 2
+            reasons.append("RSI aşırı alım bölgesinde (SHORT)")
+            
+        # MACD Analizi
+        if macd > 0:
+            long_points += 1
+            reasons.append("MACD pozitif (LONG)")
+        else:
+            short_points += 1
+            reasons.append("MACD negatif (SHORT)")
+            
+        # EMA Trend Analizi
+        if ema20 > ema50:
+            long_points += 2
+            reasons.append("EMA20 > EMA50 (LONG)")
+        else:
+            short_points += 2
+            reasons.append("EMA20 < EMA50 (SHORT)")
+            
+        # Bollinger Bands Analizi
+        bb_position = (current_price - bb_lower) / (bb_upper - bb_lower)
+        if bb_position < 0.2:
+            long_points += 2
+            reasons.append("Fiyat BB alt bandına yakın (LONG)")
+        elif bb_position > 0.8:
+            short_points += 2
+            reasons.append("Fiyat BB üst bandına yakın (SHORT)")
+
+        # Pozisyon türünü belirle
+        position_type = "LONG" if long_points > short_points else "SHORT"
+        confidence = abs(long_points - short_points)
+        
+        # Kaldıraç önerisi
+        leverage = self._recommend_leverage(opportunity_score, position_type, confidence)
+        
+        return {
+            'position': position_type,
+            'confidence': confidence,
+            'leverage': leverage,
+            'reasons': reasons,
+            'risk_level': self._get_risk_level(leverage)
+        }
+
+    def _recommend_leverage(self, opportunity_score: float, position_type: str, confidence: int) -> int:
+        """Kaldıraç önerisi hesapla"""
+        # Base kaldıraç puanını hesapla
+        if opportunity_score >= 90:
+            base_leverage = self.risk_levels['EXTREME']['leverage']
+        elif opportunity_score >= 80:
+            base_leverage = self.risk_levels['HIGH']['leverage']
+        elif opportunity_score >= 60:
+            base_leverage = self.risk_levels['MEDIUM']['leverage']
+        else:
+            base_leverage = self.risk_levels['LOW']['leverage']
+        
+        # Güven skoruna göre ayarla
+        if confidence >= 6:  # Yüksek güven
+            leverage = base_leverage
+        elif confidence >= 4:  # Orta güven
+            leverage = max(2, base_leverage - 2)
+        else:  # Düşük güven
+            leverage = max(2, base_leverage - 4)
+        
+        # SHORT pozisyonlar için daha konservatif ol
+        if position_type == "SHORT":
+            leverage = max(2, leverage - 2)
+            
+        return min(leverage, self.max_leverage)
+
+    def _get_risk_level(self, leverage: int) -> str:
+        """Kaldıraç seviyesine göre risk seviyesini belirle"""
+        if leverage >= 15:
+            return "⚠️ AŞIRI RİSKLİ"
+        elif leverage >= 10:
+            return "🔴 YÜKSEK RİSK"
+        elif leverage >= 5:
+            return "🟡 ORTA RİSK"
+        else:
+            return "🟢 DÜŞÜK RİSK"
+
+    def _format_position_message(self, analysis: dict) -> str:
+        """Pozisyon önerisi mesajını formatla"""
+        position = analysis['position_recommendation']
+        leverage = analysis['recommended_leverage']
+        risk_level = analysis['risk_level']
+        
+        message = (
+            f"📊 POZİSYON ÖNERİSİ:\n"
+            f"{'🟢 LONG' if position == 'LONG' else '🔴 SHORT'} x{leverage}\n"
+            f"Risk Seviyesi: {risk_level}\n\n"
+            f"📝 Analiz Nedenleri:\n"
+        )
+        
+        for reason in analysis['analysis_reasons']:
+            message += f"• {reason}\n"
+            
+        return message 
