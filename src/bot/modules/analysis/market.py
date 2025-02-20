@@ -49,6 +49,15 @@ class MarketAnalyzer:
             'NEUTRAL': {'score': 40, 'rsi': 45}
         }
 
+        # Sinyal seviyeleri
+        self.signal_levels = {
+            'STRONG_BUY': {'min_score': 80, 'emoji': '🟢'},
+            'BUY': {'min_score': 65, 'emoji': '🟡'},
+            'NEUTRAL': {'min_score': 45, 'emoji': '⚪'},
+            'SELL': {'min_score': 35, 'emoji': '🔴'},
+            'STRONG_SELL': {'min_score': 0, 'emoji': '⛔'}
+        }
+
     async def _init_valid_symbols(self):
         """Geçerli USDT sembollerini asenkron olarak al"""
         try:
@@ -307,6 +316,28 @@ class MarketAnalyzer:
         }
         return signals.get(position_type, "⚪ NÖTR")
 
+    def _determine_signal(self, score: float, rsi: float, trend: str) -> str:
+        """Sinyal belirle"""
+        # RSI bazlı ek kontroller
+        rsi_extreme = False
+        if rsi <= 30 or rsi >= 70:
+            rsi_extreme = True
+
+        # Trend bazlı ek kontroller
+        trend_strong = trend in ["YUKARI", "AŞAĞI"]
+
+        # Sinyal seviyesini belirle
+        if score >= self.signal_levels['STRONG_BUY']['min_score'] and (rsi_extreme or trend_strong):
+            return f"{self.signal_levels['STRONG_BUY']['emoji']} GÜÇLÜ AL"
+        elif score >= self.signal_levels['BUY']['min_score']:
+            return f"{self.signal_levels['BUY']['emoji']} AL"
+        elif score >= self.signal_levels['NEUTRAL']['min_score']:
+            return f"{self.signal_levels['NEUTRAL']['emoji']} NÖTR"
+        elif score >= self.signal_levels['SELL']['min_score']:
+            return f"{self.signal_levels['SELL']['emoji']} SAT"
+        else:
+            return f"{self.signal_levels['STRONG_SELL']['emoji']} GÜÇLÜ SAT"
+
     async def analyze_single_coin(self, symbol: str) -> Optional[Dict]:
         """Tek bir coin için analiz yap"""
         try:
@@ -359,12 +390,18 @@ class MarketAnalyzer:
                 avg_volume
             )
             
-            # Sinyal belirle
-            signal = self._format_position_signal(self._determine_signal(opportunity_score, rsi[-1], trend))
+            # Pozisyon önerisi al
+            position_rec = self._analyze_position_recommendation(
+                rsi[-1], hist[-1], ema20[-1], ema50[-1],
+                bb_upper, bb_lower, closes[-1], opportunity_score, volume_surge
+            )
             
-            analysis_result = {
+            # Sinyal belirle
+            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
+            
+            return {
                 'symbol': symbol,
-                'price': float(ohlcv[-1][4]),
+                'price': closes[-1],
                 'volume': current_volume,
                 'rsi': float(rsi[-1]),
                 'macd': float(hist[-1]),
@@ -372,14 +409,17 @@ class MarketAnalyzer:
                 'volume_surge': volume_surge,
                 'opportunity_score': float(opportunity_score),
                 'signal': signal,
-                'bb_upper': float(bb_upper),
-                'bb_lower': float(bb_lower),
+                'position_recommendation': position_rec['position'],
+                'position_confidence': position_rec['confidence'],
+                'recommended_leverage': position_rec['leverage'],
+                'risk_level': position_rec['risk_level'],
+                'analysis_reasons': position_rec['reasons'],
                 'ema20': float(ema20[-1]),
-                'ema50': float(ema50[-1])
+                'ema50': float(ema50[-1]),
+                'bb_upper': float(bb_upper),
+                'bb_middle': float(bb_middle),
+                'bb_lower': float(bb_lower)
             }
-            
-            self.logger.debug(f"Analysis completed for {symbol}")
-            return analysis_result
             
         except Exception as e:
             self.logger.error(f"Single coin analysis error ({symbol}): {str(e)}")
