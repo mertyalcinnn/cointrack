@@ -40,6 +40,15 @@ class MarketAnalyzer:
             'EXTREME': {'leverage': 20, 'min_score': 90}
         }
 
+        # Trading sinyalleri için eşikler
+        self.signal_thresholds = {
+            'STRONG_LONG': {'score': 80, 'rsi': 30, 'trend': 'YUKARI'},
+            'LONG': {'score': 60, 'rsi': 40, 'trend': 'YUKARI'},
+            'STRONG_SHORT': {'score': 80, 'rsi': 70, 'trend': 'AŞAĞI'},
+            'SHORT': {'score': 60, 'rsi': 60, 'trend': 'AŞAĞI'},
+            'NEUTRAL': {'score': 40, 'rsi': 45}
+        }
+
     async def _init_valid_symbols(self):
         """Geçerli USDT sembollerini asenkron olarak al"""
         try:
@@ -137,7 +146,7 @@ class MarketAnalyzer:
                         if opportunity_score >= 40:  # 50'den 40'a düşürdük
                             position_rec = self._analyze_position_recommendation(
                                 rsi[-1], hist[-1], ema20[-1], ema50[-1],
-                                bb_upper, bb_lower, current_price, opportunity_score
+                                bb_upper, bb_lower, current_price, opportunity_score, volume_surge
                             )
                             
                             opportunity = {
@@ -149,7 +158,7 @@ class MarketAnalyzer:
                                 'trend': trend,
                                 'volume_surge': volume_surge,
                                 'opportunity_score': float(opportunity_score),
-                                'signal': self._determine_signal(opportunity_score, rsi[-1], trend),
+                                'signal': self._format_position_signal(position_rec['position']),
                                 'ema20': float(ema20[-1]),
                                 'ema50': float(ema50[-1]),
                                 'bb_upper': float(bb_upper),
@@ -159,7 +168,8 @@ class MarketAnalyzer:
                                 'position_confidence': position_rec['confidence'],
                                 'recommended_leverage': position_rec['leverage'],
                                 'risk_level': position_rec['risk_level'],
-                                'analysis_reasons': position_rec['reasons']
+                                'analysis_reasons': position_rec['reasons'],
+                                'score': position_rec['score']
                             }
                             
                             opportunities.append(opportunity)
@@ -286,16 +296,16 @@ class MarketAnalyzer:
             
         return min(100, score)
 
-    def _determine_signal(self, score: float, rsi: float, trend: str) -> str:
-        """Sinyal belirle"""
-        if score >= 80:
-            return "🟢 GÜÇLÜ AL"
-        elif score >= 65:
-            return "🟡 AL"
-        elif score >= 50:
-            return "⚪ İZLE"
-        else:
-            return "🔴 BEKLE"
+    def _format_position_signal(self, position_type: str) -> str:
+        """Pozisyon sinyalini formatla"""
+        signals = {
+            'STRONG_LONG': "💚 GÜÇLÜ LONG",
+            'LONG': "💚 LONG",
+            'STRONG_SHORT': "❤️ GÜÇLÜ SHORT",
+            'SHORT': "❤️ SHORT",
+            'NEUTRAL': "⚪ NÖTR"
+        }
+        return signals.get(position_type, "⚪ NÖTR")
 
     async def analyze_single_coin(self, symbol: str) -> Optional[Dict]:
         """Tek bir coin için analiz yap"""
@@ -350,7 +360,7 @@ class MarketAnalyzer:
             )
             
             # Sinyal belirle
-            signal = self._determine_signal(opportunity_score, rsi[-1], trend)
+            signal = self._format_position_signal(self._determine_signal(opportunity_score, rsi[-1], trend))
             
             analysis_result = {
                 'symbol': symbol,
@@ -403,7 +413,8 @@ class MarketAnalyzer:
                                        bb_upper: float,
                                        bb_lower: float,
                                        current_price: float,
-                                       opportunity_score: float) -> dict:
+                                       opportunity_score: float,
+                                       volume_surge: bool) -> dict:
         """Long/Short pozisyon önerisi analizi"""
         long_points = 0
         short_points = 0
@@ -411,40 +422,84 @@ class MarketAnalyzer:
         
         # RSI Analizi
         if rsi < 30:
-            long_points += 2
-            reasons.append("RSI aşırı satım bölgesinde (LONG)")
+            long_points += 3
+            reasons.append("💚 RSI aşırı satım bölgesinde (LONG)")
         elif rsi > 70:
-            short_points += 2
-            reasons.append("RSI aşırı alım bölgesinde (SHORT)")
+            short_points += 3
+            reasons.append("❤️ RSI aşırı alım bölgesinde (SHORT)")
+        elif rsi < 45:
+            long_points += 1
+            reasons.append("💚 RSI satım bölgesine yakın (LONG)")
+        elif rsi > 55:
+            short_points += 1
+            reasons.append("❤️ RSI alım bölgesine yakın (SHORT)")
             
         # MACD Analizi
-        if macd > 0:
-            long_points += 1
-            reasons.append("MACD pozitif (LONG)")
-        else:
-            short_points += 1
-            reasons.append("MACD negatif (SHORT)")
+        if macd > 0 and macd > abs(macd) * 0.02:  # Pozitif ve belirli bir eşiğin üzerinde
+            long_points += 2
+            reasons.append("💚 MACD güçlü pozitif sinyal (LONG)")
+        elif macd < 0 and abs(macd) > abs(macd) * 0.02:  # Negatif ve belirli bir eşiğin üzerinde
+            short_points += 2
+            reasons.append("❤️ MACD güçlü negatif sinyal (SHORT)")
             
         # EMA Trend Analizi
         if ema20 > ema50:
-            long_points += 2
-            reasons.append("EMA20 > EMA50 (LONG)")
+            if (ema20 - ema50) / ema50 * 100 > 1:  # %1'den fazla fark
+                long_points += 3
+                reasons.append("💚 Güçlü yükseliş trendi - EMA20 > EMA50 (LONG)")
+            else:
+                long_points += 1
+                reasons.append("💚 Yükseliş trendi başlangıcı (LONG)")
         else:
-            short_points += 2
-            reasons.append("EMA20 < EMA50 (SHORT)")
+            if (ema50 - ema20) / ema50 * 100 > 1:  # %1'den fazla fark
+                short_points += 3
+                reasons.append("❤️ Güçlü düşüş trendi - EMA20 < EMA50 (SHORT)")
+            else:
+                short_points += 1
+                reasons.append("❤️ Düşüş trendi başlangıcı (SHORT)")
             
         # Bollinger Bands Analizi
         bb_position = (current_price - bb_lower) / (bb_upper - bb_lower)
-        if bb_position < 0.2:
+        if bb_position < 0.1:
+            long_points += 3
+            reasons.append("💚 Fiyat BB alt bandının altında (GÜÇLÜ LONG)")
+        elif bb_position < 0.2:
             long_points += 2
-            reasons.append("Fiyat BB alt bandına yakın (LONG)")
+            reasons.append("💚 Fiyat BB alt bandına yakın (LONG)")
+        elif bb_position > 0.9:
+            short_points += 3
+            reasons.append("❤️ Fiyat BB üst bandının üstünde (GÜÇLÜ SHORT)")
         elif bb_position > 0.8:
             short_points += 2
-            reasons.append("Fiyat BB üst bandına yakın (SHORT)")
+            reasons.append("❤️ Fiyat BB üst bandına yakın (SHORT)")
 
-        # Pozisyon türünü belirle
-        position_type = "LONG" if long_points > short_points else "SHORT"
-        confidence = abs(long_points - short_points)
+        # Hacim analizi
+        if volume_surge:
+            if long_points > short_points:
+                long_points += 2
+                reasons.append("💚 Yüksek hacimle yükseliş (LONG)")
+            elif short_points > long_points:
+                short_points += 2
+                reasons.append("❤️ Yüksek hacimle düşüş (SHORT)")
+
+        # Pozisyon türünü ve gücünü belirle
+        if long_points > short_points:
+            if long_points - short_points >= 5:
+                position_type = "STRONG_LONG"
+                confidence = 3
+            else:
+                position_type = "LONG"
+                confidence = 2
+        elif short_points > long_points:
+            if short_points - long_points >= 5:
+                position_type = "STRONG_SHORT"
+                confidence = 3
+            else:
+                position_type = "SHORT"
+                confidence = 2
+        else:
+            position_type = "NEUTRAL"
+            confidence = 1
         
         # Kaldıraç önerisi
         leverage = self._recommend_leverage(opportunity_score, position_type, confidence)
@@ -454,7 +509,8 @@ class MarketAnalyzer:
             'confidence': confidence,
             'leverage': leverage,
             'reasons': reasons,
-            'risk_level': self._get_risk_level(leverage)
+            'risk_level': self._get_risk_level(leverage),
+            'score': opportunity_score
         }
 
     def _recommend_leverage(self, opportunity_score: float, position_type: str, confidence: int) -> int:
@@ -469,18 +525,17 @@ class MarketAnalyzer:
         else:
             base_leverage = self.risk_levels['LOW']['leverage']
         
-        # Güven skoruna göre ayarla
-        if confidence >= 6:  # Yüksek güven
+        # Pozisyon türüne göre ayarla
+        if position_type.startswith('STRONG'):
             leverage = base_leverage
-        elif confidence >= 4:  # Orta güven
-            leverage = max(2, base_leverage - 2)
-        else:  # Düşük güven
+        elif position_type == 'NEUTRAL':
             leverage = max(2, base_leverage - 4)
+        else:
+            leverage = max(2, base_leverage - 2)
         
-        # SHORT pozisyonlar için daha konservatif ol
-        if position_type == "SHORT":
-            leverage = max(2, leverage - 2)
-            
+        # Güven skoruna göre ayarla
+        leverage = leverage * confidence // 3
+        
         return min(leverage, self.max_leverage)
 
     def _get_risk_level(self, leverage: int) -> str:
