@@ -249,9 +249,21 @@ class TrackHandler:
             if chat_id not in self.tracked_coins:
                 self.tracked_coins[chat_id] = {}
             
+            # Risk hesaplama
+            risk_ratio = 0.02  # %2 risk
+            target_ratio = 0.04  # %4 hedef
+            
+            # LONG pozisyon varsayılan
+            target_price = entry_price * (1 + target_ratio)
+            stop_price = entry_price * (1 - risk_ratio)
+            is_long = True
+            
             self.tracked_coins[chat_id][symbol] = {
                 'entry_price': entry_price,
                 'last_update': datetime.now(),
+                'target_price': target_price,
+                'stop_price': stop_price,
+                'is_long': is_long,
                 'alerts': []
             }
             
@@ -281,9 +293,21 @@ class TrackHandler:
                 if chat_id not in self.tracked_coins:
                     self.tracked_coins[chat_id] = {}
                 
+                # Risk hesaplama
+                risk_ratio = 0.02  # %2 risk
+                target_ratio = 0.04  # %4 hedef
+                
+                # LONG pozisyon varsayılan
+                target_price = entry_price * (1 + target_ratio)
+                stop_price = entry_price * (1 - risk_ratio)
+                is_long = True
+                
                 self.tracked_coins[chat_id][symbol] = {
                     'entry_price': entry_price,
                     'last_update': datetime.now(),
+                    'target_price': target_price,
+                    'stop_price': stop_price,
+                    'is_long': is_long,
                     'alerts': []
                 }
                 
@@ -315,7 +339,38 @@ class TrackHandler:
 
     async def remove_from_tracking(self, chat_id: int, symbol: str) -> bool:
         """Coini takipten çıkar"""
-        if chat_id in self.tracked_coins and symbol in self.tracked_coins[chat_id]:
-            del self.tracked_coins[chat_id][symbol]
+        try:
+            if chat_id in self.tracked_coins and symbol in self.tracked_coins[chat_id]:
+                # Task'i iptal et
+                if chat_id in self.tracking_tasks and symbol in self.tracking_tasks[chat_id]:
+                    self.tracking_tasks[chat_id][symbol].cancel()
+                    del self.tracking_tasks[chat_id][symbol]
+                
+                # Coin'i takipten çıkar
+                del self.tracked_coins[chat_id][symbol]
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Coin takipten çıkarma hatası: {str(e)}")
+            return False
+
+    async def remove_all_tracking(self, chat_id: int) -> bool:
+        """Tüm coinleri takipten çıkar"""
+        try:
+            # Aktif takip görevlerini iptal et
+            if chat_id in self.tracking_tasks:
+                for task in self.tracking_tasks[chat_id].values():
+                    try:
+                        task.cancel()
+                    except:
+                        pass
+                self.tracking_tasks[chat_id].clear()
+            
+            # Takip listesini temizle
+            if chat_id in self.tracked_coins:
+                self.tracked_coins[chat_id].clear()
+                
             return True
-        return False 
+        except Exception as e:
+            self.logger.error(f"Tüm coinleri takipten çıkarma hatası: {str(e)}")
+            return False

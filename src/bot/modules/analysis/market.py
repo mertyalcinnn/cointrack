@@ -14,8 +14,10 @@ class MarketAnalyzer:
         self.client = BinanceClient()
         self.indicators = Indicators()
         self.exchange = ccxt.binance()
-        self.min_volume = 500000  # Minimum hacmi düşürdük
+        self.min_volume = 1000000  # Minimum 1M USDT hacim
         self.min_price = 0.00001
+        self.timeframe = '1h'  # 1 saatlik mum
+        self.limit = 200  # Son 200 mum
         self.advanced_analyzer = AdvancedAnalyzer()
         
         # Debug için sayaçlar
@@ -402,6 +404,9 @@ class MarketAnalyzer:
             # Sinyal belirle
             signal = self._determine_signal(opportunity_score, rsi[-1], trend)
             
+            # Pozisyon yönü analizi ekle
+            position_analysis = self.analyze_position_direction(pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']))
+            
             return {
                 'symbol': symbol,
                 'price': closes[-1],
@@ -417,11 +422,18 @@ class MarketAnalyzer:
                 'recommended_leverage': position_rec['leverage'],
                 'risk_level': position_rec['risk_level'],
                 'analysis_reasons': position_rec['reasons'],
+                'score': position_rec['score'],
                 'ema20': float(ema20[-1]),
                 'ema50': float(ema50[-1]),
                 'bb_upper': float(bb_upper),
                 'bb_middle': float(bb_middle),
-                'bb_lower': float(bb_lower)
+                'bb_lower': float(bb_lower),
+                'position': position_analysis['direction'],
+                'confidence': position_analysis['confidence'],
+                'current_price': position_analysis['current_price'],
+                'long_position': position_analysis['long_position'],
+                'short_position': position_analysis['short_position'],
+                'signals': position_analysis['signals']
             }
             
         except Exception as e:
@@ -609,3 +621,361 @@ class MarketAnalyzer:
             message += f"• {reason}\n"
             
         return message 
+
+    def analyze_volume_profile(self, df: pd.DataFrame) -> Dict:
+        """Hacim profili analizi"""
+        try:
+            recent_volume = df['volume'].tail(20).mean()
+            volume_sma = df['volume'].rolling(window=20).mean()
+            
+            volume_strength = 'WEAK'
+            if recent_volume > volume_sma.mean() * 2:
+                volume_strength = 'VERY_STRONG'
+            elif recent_volume > volume_sma.mean() * 1.5:
+                volume_strength = 'STRONG'
+            elif recent_volume > volume_sma.mean() * 1.2:
+                volume_strength = 'MODERATE'
+                
+            return {
+                'strength': volume_strength,
+                'recent_volume': float(recent_volume),
+                'average_volume': float(volume_sma.mean())
+            }
+        except Exception as e:
+            self.logger.error(f"Hacim profili analiz hatası: {e}")
+            return {'strength': 'WEAK', 'recent_volume': 0, 'average_volume': 0}
+
+    def analyze_trend_strength(self, df: pd.DataFrame) -> float:
+        """Trend gücü analizi"""
+        try:
+            # EMA hesapla
+            ema20 = df['close'].ewm(span=20, adjust=False).mean()
+            ema50 = df['close'].ewm(span=50, adjust=False).mean()
+            ema200 = df['close'].ewm(span=200, adjust=False).mean()
+            
+            # Trend yönü ve gücü
+            trend_score = 0.0
+            
+            # Kısa vadeli trend
+            if ema20.iloc[-1] > ema50.iloc[-1]:
+                trend_score += 0.4
+            
+            # Orta vadeli trend
+            if ema50.iloc[-1] > ema200.iloc[-1]:
+                trend_score += 0.3
+            
+            # Momentum
+            roc = (df['close'].iloc[-1] - df['close'].iloc[-20]) / df['close'].iloc[-20] * 100
+            if roc > 0:
+                trend_score += 0.3
+                
+            return float(trend_score)
+            
+        except Exception as e:
+            self.logger.error(f"Trend gücü analiz hatası: {e}")
+            return 0.0
+
+    def analyze_momentum(self, df: pd.DataFrame) -> Dict:
+        """Momentum analizi"""
+        try:
+            # RSI
+            rsi = self.calculate_rsi(df)
+            
+            # MACD
+            macd = self.calculate_macd(df['close'].to_numpy())
+            
+            # Momentum gücü
+            momentum_strength = 'WEAK'
+            if rsi > 70 and macd[0][-1] > 0:
+                momentum_strength = 'VERY_STRONG'
+            elif rsi > 60 and macd[0][-1] > 0:
+                momentum_strength = 'STRONG'
+            elif rsi > 50 and macd[0][-1] > 0:
+                momentum_strength = 'MODERATE'
+                
+            return {
+                'strength': momentum_strength,
+                'rsi': float(rsi),
+                'macd': float(macd[0][-1])
+            }
+        except Exception as e:
+            self.logger.error(f"Momentum analiz hatası: {e}")
+            return {'strength': 'WEAK', 'rsi': 50, 'macd': 0}
+
+    def analyze_liquidity(self, df: pd.DataFrame) -> Dict:
+        """Likidite analizi"""
+        try:
+            # Hacim bazlı likidite skoru
+            volume_mean = df['volume'].mean()
+            recent_volume = df['volume'].tail(20).mean()
+            liquidity_score = min(1.0, recent_volume / volume_mean)
+            
+            return {
+                'score': float(liquidity_score),
+                'average_volume': float(volume_mean),
+                'recent_volume': float(recent_volume)
+            }
+        except Exception as e:
+            self.logger.error(f"Likidite analiz hatası: {e}")
+            return {'score': 0.0, 'average_volume': 0, 'recent_volume': 0}
+
+    def calculate_volatility(self, df: pd.DataFrame) -> float:
+        """Volatilite hesaplama"""
+        try:
+            returns = df['close'].pct_change()
+            return float(returns.std())
+        except Exception as e:
+            self.logger.error(f"Volatilite hesaplama hatası: {e}")
+            return 0.0
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """ATR (Average True Range) hesaplama"""
+        try:
+            high = df['high']
+            low = df['low']
+            close = df['close']
+            
+            tr1 = high - low
+            tr2 = abs(high - close.shift())
+            tr3 = abs(low - close.shift())
+            
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr = tr.rolling(window=period).mean()
+            
+            return float(atr.iloc[-1])
+        except Exception as e:
+            self.logger.error(f"ATR hesaplama hatası: {e}")
+            return 0.0
+
+    async def validate_advanced_signal(self, symbol: str, timeframe: str) -> Dict:
+        """Gelişmiş sinyal doğrulama"""
+        try:
+            # OHLCV verilerini al
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=self.limit)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            score = 0
+            required_score = {'15m': 12, '4h': 10}
+            
+            # Teknik analiz skoru
+            analysis = await self.analyze_single_coin(symbol)
+            if analysis and analysis.get('opportunity_score', 0) > 80:
+                score += 3
+            elif analysis and analysis.get('opportunity_score', 0) > 70:
+                score += 2
+            
+            # Hacim analizi
+            volume_profile = self.analyze_volume_profile(df)
+            if volume_profile['strength'] == 'VERY_STRONG':
+                score += 3
+            elif volume_profile['strength'] == 'STRONG':
+                score += 2
+            
+            # Trend gücü
+            trend_strength = self.analyze_trend_strength(df)
+            if trend_strength > 0.8:
+                score += 3
+            elif trend_strength > 0.6:
+                score += 2
+            
+            # Momentum
+            momentum = self.analyze_momentum(df)
+            if momentum['strength'] == 'VERY_STRONG':
+                score += 3
+            elif momentum['strength'] == 'STRONG':
+                score += 2
+            
+            # Likidite
+            liquidity = self.analyze_liquidity(df)
+            if liquidity['score'] > 0.8:
+                score += 2
+            elif liquidity['score'] > 0.6:
+                score += 1
+            
+            return {
+                'score': score,
+                'required_score': required_score.get(timeframe, 10),
+                'is_valid': score >= required_score.get(timeframe, 10),
+                'confidence': score / 15 * 100
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Gelişmiş sinyal doğrulama hatası: {e}")
+            return {'is_valid': False, 'confidence': 0}
+
+    def calculate_advanced_risk_management(self, df: pd.DataFrame, entry_price: float, timeframe: str) -> Optional[Dict]:
+        """Gelişmiş risk yönetimi"""
+        try:
+            volatility = self.calculate_volatility(df)
+            atr = self.calculate_atr(df)
+            
+            risk_factors = {
+                '15m': {
+                    'sl_mult': 1.5 + (volatility * 0.5),
+                    'tp_mult': 3.0 + (volatility * 1.0),
+                    'trailing_start': 1.5,
+                    'partial_exit': [
+                        {'percentage': 30, 'at_profit': 1.0},
+                        {'percentage': 40, 'at_profit': 2.0},
+                        {'percentage': 30, 'at_profit': 3.0}
+                    ]
+                },
+                '4h': {
+                    'sl_mult': 2.0 + (volatility * 0.7),
+                    'tp_mult': 4.0 + (volatility * 1.5),
+                    'trailing_start': 2.0,
+                    'partial_exit': [
+                        {'percentage': 20, 'at_profit': 1.5},
+                        {'percentage': 30, 'at_profit': 3.0},
+                        {'percentage': 30, 'at_profit': 4.5},
+                        {'percentage': 20, 'at_profit': 6.0}
+                    ]
+                }
+            }
+            
+            factors = risk_factors.get(timeframe, risk_factors['4h'])
+            
+            stop_loss = entry_price - (atr * factors['sl_mult'])
+            take_profit = entry_price + (atr * factors['tp_mult'])
+            trailing_activation = entry_price * (1 + factors['trailing_start'] / 100)
+            
+            rr_ratio = (take_profit - entry_price) / (entry_price - stop_loss)
+            if rr_ratio < 2:
+                return None
+                
+            return {
+                'stop_loss': float(stop_loss),
+                'take_profit': float(take_profit),
+                'trailing_activation': float(trailing_activation),
+                'trailing_step': float(atr * 0.3),
+                'partial_exits': factors['partial_exit'],
+                'risk_reward_ratio': float(rr_ratio)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Risk yönetimi hesaplama hatası: {e}")
+            return None 
+
+    def analyze_position_direction(self, df: pd.DataFrame) -> Dict:
+        """Pozisyon yönü analizi"""
+        try:
+            # Son kapanış fiyatı
+            current_price = float(df['close'].iloc[-1])
+            
+            # EMA hesapla
+            ema20 = df['close'].ewm(span=20, adjust=False).mean()
+            ema50 = df['close'].ewm(span=50, adjust=False).mean()
+            
+            # RSI
+            rsi = self.calculate_rsi(df)
+            
+            # MACD
+            macd, signal, hist = self.calculate_macd(df['close'].to_numpy())
+            
+            # Bollinger Bands
+            bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(df['close'].to_numpy())
+            
+            # Pozisyon yönü belirleme
+            long_signals = 0
+            short_signals = 0
+            
+            # EMA bazlı sinyal
+            if current_price > ema20.iloc[-1] and ema20.iloc[-1] > ema50.iloc[-1]:
+                long_signals += 1
+            elif current_price < ema20.iloc[-1] and ema20.iloc[-1] < ema50.iloc[-1]:
+                short_signals += 1
+            
+            # RSI bazlı sinyal
+            if rsi < 30:
+                long_signals += 1
+            elif rsi > 70:
+                short_signals += 1
+            
+            # MACD bazlı sinyal
+            if hist[-1] > 0 and hist[-1] > hist[-2]:
+                long_signals += 1
+            elif hist[-1] < 0 and hist[-1] < hist[-2]:
+                short_signals += 1
+            
+            # Bollinger Bands bazlı sinyal
+            if current_price <= bb_lower[-1]:
+                long_signals += 1
+            elif current_price >= bb_upper[-1]:
+                short_signals += 1
+            
+            # Stop loss seviyeleri hesaplama
+            atr = self.calculate_atr(df)
+            volatility = self.calculate_volatility(df)
+            
+            # Dinamik stop loss çarpanı
+            sl_multiplier = 1.5 + (volatility * 0.5)
+            
+            # Long pozisyon için stop loss
+            long_sl = current_price - (atr * sl_multiplier)
+            # Short pozisyon için stop loss
+            short_sl = current_price + (atr * sl_multiplier)
+            
+            # Risk/Ödül oranı hesaplama
+            long_tp = current_price + (atr * sl_multiplier * 2)  # 1:2 risk/ödül
+            short_tp = current_price - (atr * sl_multiplier * 2)
+            
+            # Pozisyon yönü belirleme
+            direction = "NEUTRAL"
+            if long_signals > short_signals and long_signals >= 2:
+                direction = "LONG"
+            elif short_signals > long_signals and short_signals >= 2:
+                direction = "SHORT"
+            
+            return {
+                'direction': direction,
+                'confidence': max(long_signals, short_signals) / 4 * 100,  # Güven skoru
+                'current_price': current_price,
+                'long_position': {
+                    'stop_loss': float(long_sl),
+                    'take_profit': float(long_tp),
+                    'risk_reward': float((long_tp - current_price) / (current_price - long_sl))
+                },
+                'short_position': {
+                    'stop_loss': float(short_sl),
+                    'take_profit': float(short_tp),
+                    'risk_reward': float((current_price - short_tp) / (short_sl - current_price))
+                },
+                'signals': {
+                    'long_signals': long_signals,
+                    'short_signals': short_signals,
+                    'rsi': float(rsi),
+                    'macd_hist': float(hist[-1]),
+                    'bb_position': 'OVERSOLD' if current_price <= bb_lower[-1] else 'OVERBOUGHT' if current_price >= bb_upper[-1] else 'NEUTRAL'
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Pozisyon yönü analiz hatası: {e}")
+            return {
+                'direction': 'NEUTRAL',
+                'confidence': 0,
+                'current_price': 0,
+                'long_position': {'stop_loss': 0, 'take_profit': 0, 'risk_reward': 0},
+                'short_position': {'stop_loss': 0, 'take_profit': 0, 'risk_reward': 0},
+                'signals': {'long_signals': 0, 'short_signals': 0, 'rsi': 0, 'macd_hist': 0, 'bb_position': 'NEUTRAL'}
+            }
+
+    def _generate_signal(self, rsi: float, macd: float, price: float, bb_upper: float, bb_lower: float) -> str:
+        """Sinyal üret"""
+        try:
+            if any(v is None for v in [rsi, macd, price, bb_upper, bb_lower]):
+                return "VERİ YOK"
+            
+            if rsi < 30 and price <= bb_lower:
+                return "GÜÇLÜ LONG"
+            elif rsi < 40 and macd > 0:
+                return "LONG"
+            elif rsi > 70 and price >= bb_upper:
+                return "GÜÇLÜ SHORT"
+            elif rsi > 60 and macd < 0:
+                return "SHORT"
+            return "BEKLE"
+            
+        except Exception as e:
+            self.logger.error(f"Sinyal üretme hatası: {e}")
+            return "HATA" 

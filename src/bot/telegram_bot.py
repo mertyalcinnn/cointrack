@@ -59,6 +59,10 @@ class TelegramBot:
         # Initialize logger
         self.logger = setup_logger('CoinScanner')
         
+        # Initialize tracking variables
+        self.tracked_coins = {}  # {chat_id: {symbol: {'entry_price': float, 'last_update': datetime}}}
+        self.track_tasks = {}    # {chat_id: {symbol: Task}}
+        
         # Initialize components
         self.application = Application.builder().token(token).build()
         self.analyzer = MarketAnalyzer(self.logger)
@@ -80,6 +84,7 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("stop", self.stop_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("list", self.list_tracked_command))
+        self.application.add_handler(CommandHandler("untrackall", self.untrackall_command))
         
         # Initialize analyzers
         self.signal_analyzer = SignalAnalyzer()
@@ -148,6 +153,7 @@ class TelegramBot:
 Örnek: /untrack BTCUSDT
 
 /list - Takip edilen coinleri listele
+/untrackall - Tüm takip edilen coinleri çıkar
 
 ⚡️ KULLANIM:
 1. /scan komutu ile fırsat taraması başlat
@@ -1407,36 +1413,81 @@ Yatırım tavsiyesi değildir."""
             await self._log(f"Untrack komutu hatası: {str(e)}", "error")
             await update.message.reply_text("❌ Takip sonlandırılırken bir hata oluştu!")
 
+    async def untrackall_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Tüm coinleri takipten çıkar"""
+        try:
+            chat_id = update.message.chat_id
+            
+            # Onay mesajı gönder
+            await update.message.reply_text(
+                "⚠️ Tüm coinleri takipten çıkarmak istediğinizden emin misiniz?\n"
+                "Bu işlem geri alınamaz!\n\n"
+                "✅ Onaylıyorsanız /untrackall yes yazın"
+            )
+
+            # Argümanları kontrol et
+            if len(context.args) > 0 and context.args[0].lower() == 'yes':
+                # Tüm coinleri takipten çıkar
+                result = await self.track_handler.remove_all_tracking(chat_id)
+                
+                if result:
+                    await update.message.reply_text(
+                        "✅ Tüm coinler takipten çıkarıldı!\n"
+                        "Yeni bir coin takibi için:\n"
+                        "1. /scan ile tarama yapın\n"
+                        "2. /track <numara> ile coin seçin"
+                    )
+                else:
+                    await update.message.reply_text("❌ Tüm coinler takipten çıkarılırken bir hata oluştu!")
+            
+        except Exception as e:
+            self.logger.error(f"Untrackall komutu hatası: {str(e)}")
+            await update.message.reply_text("❌ Beklenmeyen bir hata oluştu!")
+
     async def list_tracked_command(self, update, context):
         """Takip edilen coinleri listele"""
         try:
             chat_id = update.message.chat_id
+            tracked_coins = self.track_handler.tracked_coins.get(chat_id, {})
             
-            if chat_id not in self.tracked_coins or not self.tracked_coins[chat_id]:
+            if not tracked_coins:
                 await update.message.reply_text("📝 Takip edilen coin bulunmuyor!")
                 return
 
             message = "📊 TAKİP EDİLEN COİNLER:\n\n"
             
-            for symbol, data in self.tracked_coins[chat_id].items():
-                current_price = await self._get_current_price(symbol)
-                if current_price:
-                    profit = ((current_price/data['entry_price'])-1)*100 if data['is_long'] else ((data['entry_price']/current_price)-1)*100
-                    
-                    message += (
-                        f"💎 {symbol}\n"
-                        f"📈 Yön: {'LONG' if data['is_long'] else 'SHORT'}\n"
-                        f"💰 Giriş: ${data['entry_price']:.4f}\n"
-                        f"📊 Mevcut: ${current_price:.4f}\n"
-                        f"💫 Kar/Zarar: %{profit:.2f}\n"
-                        f"🎯 Hedef: ${data['target_price']:.4f}\n"
-                        f"🛑 Stop: ${data['stop_price']:.4f}\n\n"
-                    )
+            for symbol, data in tracked_coins.items():
+                try:
+                    current_price = await self._get_current_price(symbol)
+                    if current_price:
+                        entry_price = data.get('entry_price', 0)
+                        is_long = data.get('is_long', True)
+                        target_price = data.get('target_price', 0)
+                        stop_price = data.get('stop_price', 0)
+                        
+                        if entry_price > 0:
+                            profit = ((current_price/entry_price)-1)*100 if is_long else ((entry_price/current_price)-1)*100
+                            
+                            message += (
+                                f"💎 {symbol}\n"
+                                f"📈 Yön: {'LONG' if is_long else 'SHORT'}\n"
+                                f"💰 Giriş: ${entry_price:.4f}\n"
+                                f"📊 Mevcut: ${current_price:.4f}\n"
+                                f"💫 Kar/Zarar: %{profit:.2f}\n"
+                                f"🎯 Hedef: ${target_price:.4f}\n"
+                                f"🛑 Stop: ${stop_price:.4f}\n\n"
+                            )
+                except Exception as coin_error:
+                    self.logger.error(f"{symbol} verisi alınırken hata: {str(coin_error)}")
+                    continue
+
+            if message == "📊 TAKİP EDİLEN COİNLER:\n\n":
+                message += "Aktif takip edilen coin bulunamadı."
 
             await update.message.reply_text(message)
 
         except Exception as e:
-            await self._log(f"List tracked komutu hatası: {str(e)}", "error")
+            self.logger.error(f"List tracked komutu hatası: {str(e)}")
             await update.message.reply_text("❌ Liste alınırken bir hata oluştu!")
 
     async def handle_coin_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
