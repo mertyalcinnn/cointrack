@@ -93,20 +93,50 @@ class ScanHandler:
             bb_position = (opp['price'] - opp['bb_lower']) / (opp['bb_upper'] - opp['bb_lower']) * 100
             bb_signal = self._get_bb_signal(bb_position)
             
+            # Stop Loss ve Take Profit bilgileri
+            stop_loss = opp.get('stop_price', 0)
+            take_profit = opp.get('target_price', 0)
+            risk_reward = opp.get('risk_reward', 0)
+            
+            # Değerler 0 ise veya None ise, varsayılan değerler kullan
+            if not stop_loss or stop_loss == 0:
+                if "LONG" in opp['signal']:
+                    stop_loss = opp['price'] * 0.98
+                elif "SHORT" in opp['signal']:
+                    stop_loss = opp['price'] * 1.02
+                else:
+                    stop_loss = opp['price'] * 0.99
+                
+            if not take_profit or take_profit == 0:
+                if "LONG" in opp['signal']:
+                    take_profit = opp['price'] * 1.03
+                elif "SHORT" in opp['signal']:
+                    take_profit = opp['price'] * 0.97
+                else:
+                    take_profit = opp['price'] * 1.01
+                
+            if not risk_reward or risk_reward == 0:
+                risk = abs(opp['price'] - stop_loss)
+                reward = abs(opp['price'] - take_profit)
+                risk_reward = reward / risk if risk > 0 else 1.0
+            
             message = (
-                f"💰 {opp['symbol']}\n"
+                f"�� {opp['symbol']}\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"💵 Fiyat: ${opp['price']:.4f}\n"
                 f"📊 RSI: {opp['rsi']:.1f}\n"
                 f"📈 Trend: {opp['trend']}\n"
                 f"⚡ Hacim: ${opp['volume']:,.0f}\n"
-                f"📊 Hacim Artışı: {'✅' if opp['volume_surge'] else '❌'}\n\n"
-                f"📈 TEKNİK ANALİZ:\n"
+                f"📊 Hacim Artışı: {'✅' if opp.get('volume_surge', False) else '❌'}\n\n"
+                f"�� TEKNİK ANALİZ:\n"
                 f"• EMA Trend: {ema_signal} ({ema_cross:.1f}%)\n"
                 f"• BB Pozisyon: {bb_signal} ({bb_position:.1f}%)\n"
                 f"• MACD: {opp['macd']:.4f}\n"
                 f"• RSI: {opp['rsi']:.1f}\n\n"
                 f"🎯 Sinyal: {opp['signal']}\n"
+                f"🛑 Stop Loss: ${stop_loss:.4f}\n"
+                f"✨ Take Profit: ${take_profit:.4f}\n"
+                f"⚖️ Risk/Ödül: {risk_reward:.2f}\n"
                 f"⭐ Fırsat Puanı: {opp['opportunity_score']:.1f}/100\n"
                 f"━━━━━━━━━━━━━━━━"
             )

@@ -966,14 +966,29 @@ class MarketAnalyzer:
             if any(v is None for v in [rsi, macd, price, bb_upper, bb_lower]):
                 return "VERİ YOK"
             
-            if rsi < 30 and price <= bb_lower:
+            # BB pozisyonu hesapla (0-100 arası)
+            bb_range = bb_upper - bb_lower
+            if bb_range > 0:
+                bb_position = (price - bb_lower) / bb_range * 100
+            else:
+                bb_position = 50
+            
+            # 15 dakikalık işlemler için SHORT sinyallerini daha agresif değerlendir
+            if rsi > 60 and price >= bb_upper * 0.95:
+                return "GÜÇLÜ SHORT"
+            elif rsi > 55 and macd < 0:
+                return "SHORT"
+            elif rsi < 30 and price <= bb_lower * 1.05:
                 return "GÜÇLÜ LONG"
             elif rsi < 40 and macd > 0:
                 return "LONG"
-            elif rsi > 70 and price >= bb_upper:
-                return "GÜÇLÜ SHORT"
-            elif rsi > 60 and macd < 0:
+            
+            # BB pozisyonuna göre ek kontrol
+            if bb_position > 80:
                 return "SHORT"
+            elif bb_position < 20:
+                return "LONG"
+            
             return "BEKLE"
             
         except Exception as e:
