@@ -22,6 +22,7 @@ import json
 from .modules.market_analyzer import MarketAnalyzer
 from .modules.handlers.scan_handler import ScanHandler
 from .modules.handlers.track_handler import TrackHandler
+from .modules.handlers.trade_handler import TradeHandler 
 from .modules.message_formatter import MessageFormatter
 from .modules.utils.logger import setup_logger
 import matplotlib.pyplot as plt
@@ -32,7 +33,7 @@ from PIL import Image, ImageDraw, ImageFont
 import base64
 import functools
 import random
-
+logging.basicConfig(level=logging.DEBUG)
 # .env dosyasının yolunu bul
 env_path = Path(__file__).parent.parent.parent / '.env'
 
@@ -44,7 +45,10 @@ else:
         "'.env' dosyası bulunamadı! Lütfen projenin kök dizininde .env dosyası oluşturun "
         "ve TELEGRAM_BOT_TOKEN değişkenini ekleyin."
     )
+if asyncio.get_event_loop().is_closed():
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
+asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 # Token'ı kontrol et
 token = os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_TOKEN')
 if not token:
@@ -120,6 +124,9 @@ class TelegramBot:
         # Track handler'ı önce oluştur
         self.track_handler = TrackHandler(self.logger)
         
+        # Trade handler'ı da ekleyin
+        self.trade_handler = TradeHandler(self.logger)
+        
         # Scan handler'a track handler'ı geçir
         self.scan_handler = ScanHandler(self.logger, self.track_handler)
         
@@ -193,6 +200,20 @@ class TelegramBot:
         # Yeni komutlar
         self.application.add_handler(CommandHandler("chart", self.cmd_chart))
         self.application.add_handler(CommandHandler("analyze", self.cmd_analyze))
+        
+        # Alım/satım komutlarını manuel olarak ekleyin
+        self.application.add_handler(CommandHandler("buy", self.trade_handler.handle_buy))
+        self.application.add_handler(CommandHandler("sell", self.trade_handler.handle_sell))
+        self.application.add_handler(CommandHandler("balance", self.trade_handler.handle_balance))
+        self.application.add_handler(CommandHandler("orders", self.trade_handler.handle_orders))
+        self.application.add_handler(CommandHandler("cancel", self.trade_handler.handle_cancel_order))
+        
+        # Callback query handler'ı ekleyin
+        self.application.add_handler(CallbackQueryHandler(self.trade_handler.callback_handler, pattern="^(trade_|cancel_)"))
+        
+        # Trade handler komutlarını kaydet
+        self.trade_handler.register_handlers(self.application)
+
     
     async def error_handler(self, update, context):
         """Hataları işle"""

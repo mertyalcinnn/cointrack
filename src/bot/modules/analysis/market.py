@@ -61,7 +61,12 @@ class MarketAnalyzer:
         }
 
         # Geçerli sembolleri al
-        self._init_valid_symbols()
+import asyncio
+
+if __name__ == "__main__":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
 
     async def _init_valid_symbols(self):
         """Geçerli USDT sembollerini asenkron olarak al"""
