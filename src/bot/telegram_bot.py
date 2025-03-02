@@ -89,12 +89,193 @@ def telegram_retry(max_tries=5, initial_delay=1, backoff_factor=2):
 # Global bot instance
 bot_instance = None
 
+# Premium gereksinimi için dekoratör
+def premium_required(func):
+    """Premium üyelik gerektiren komutlar için dekoratör"""
+    @functools.wraps(func)
+    async def wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+        
+        # Kullanıcı premium mu kontrol et
+        if self.premium_manager.is_premium(user_id):
+            return await func(self, update, context, *args, **kwargs)
+        else:
+            # Premium değilse bilgilendir
+            status = self.premium_manager.get_premium_status(user_id)
+            
+            if not status['trial_used']:
+                # Deneme süresi kullanılmamışsa teklif et
+                keyboard = [[InlineKeyboardButton("🎁 Deneme Süresi Başlat", callback_data="start_trial")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    "⭐ Bu özellik premium üyelik gerektirir!\n\n"
+                    "🎁 3 günlük ücretsiz deneme sürenizi başlatmak ister misiniz?\n"
+                    "Alternatif olarak /trial komutunu da kullanabilirsiniz.",
+                    reply_markup=reply_markup
+                )
+            else:
+                # Deneme süresi kullanılmışsa premium teklif et
+                keyboard = [[InlineKeyboardButton("💰 Premium Bilgileri", callback_data="premium_info")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    "⭐ Bu özellik premium üyelik gerektirir!\n\n"
+                    "Deneme sürenizi daha önce kullandınız.\n"
+                    "Premium üyelik bilgileri için /premium komutunu kullanabilirsiniz.",
+                    reply_markup=reply_markup
+                )
+            
+            return None
+    return wrapper
+
+class PremiumManager:
+    """Premium kullanıcıları yönetmek için yardımcı sınıf"""
+    
+    def __init__(self, logger):
+        self.logger = logger
+        self.premium_users = {}  # {user_id: {'expiry_date': datetime, 'trial_used': bool}}
+        self.premium_file = Path(__file__).parent / 'data' / 'premium_users.json'
+        
+        # data klasörünü oluştur
+        os.makedirs(os.path.dirname(self.premium_file), exist_ok=True)
+        
+        # Premium kullanıcı verilerini yükle
+        self.load_premium_users()
+    
+    def load_premium_users(self):
+        """Premium kullanıcı verilerini dosyadan yükle"""
+        try:
+            if self.premium_file.exists():
+                with open(self.premium_file, 'r') as f:
+                    data = json.load(f)
+                    
+                    # Tarihleri string'den datetime'a çevir
+                    for user_id, user_data in data.items():
+                        if 'expiry_date' in user_data:
+                            user_data['expiry_date'] = datetime.fromisoformat(user_data['expiry_date'])
+                    
+                    self.premium_users = {int(k): v for k, v in data.items()}
+                    self.logger.info(f"{len(self.premium_users)} premium kullanıcı yüklendi")
+        except Exception as e:
+            self.logger.error(f"Premium kullanıcı verilerini yükleme hatası: {e}")
+            self.premium_users = {}
+    
+    def save_premium_users(self):
+        """Premium kullanıcı verilerini dosyaya kaydet"""
+        try:
+            # datetime nesnelerini string'e çevir
+            data = {}
+            for user_id, user_data in self.premium_users.items():
+                data[str(user_id)] = user_data.copy()
+                if 'expiry_date' in data[str(user_id)]:
+                    data[str(user_id)]['expiry_date'] = data[str(user_id)]['expiry_date'].isoformat()
+            
+            with open(self.premium_file, 'w') as f:
+                json.dump(data, f, indent=4)
+                
+            self.logger.info(f"{len(self.premium_users)} premium kullanıcı kaydedildi")
+        except Exception as e:
+            self.logger.error(f"Premium kullanıcı verilerini kaydetme hatası: {e}")
+    
+    def is_premium(self, user_id):
+        """Kullanıcının premium olup olmadığını kontrol et"""
+        if user_id in self.premium_users:
+            # Süresi dolmuş mu kontrol et
+            if self.premium_users[user_id].get('expiry_date') > datetime.now():
+                return True
+            else:
+                # Süresi dolmuşsa premium_users'dan çıkar
+                self.logger.info(f"Kullanıcı {user_id} premium süresi doldu")
+        return False
+    
+    def start_trial(self, user_id):
+        """Kullanıcıya deneme süresi başlat"""
+        # Kullanıcı zaten premium mi kontrol et
+        if self.is_premium(user_id):
+            return False, "Zaten premium üyeleğiniz bulunmaktadır."
+        
+        # Kullanıcı daha önce deneme süresi kullanmış mı kontrol et
+        if user_id in self.premium_users and self.premium_users[user_id].get('trial_used', False):
+            return False, "Deneme sürenizi daha önce kullandınız."
+        
+        # 3 günlük deneme süresi başlat
+        expiry_date = datetime.now() + timedelta(days=3)
+        self.premium_users[user_id] = {
+            'expiry_date': expiry_date,
+            'trial_used': True,
+            'subscription_type': 'trial'
+        }
+        
+        # Değişiklikleri kaydet
+        self.save_premium_users()
+        
+        return True, f"3 günlük deneme süreniz başlatıldı. Bitiş tarihi: {expiry_date.strftime('%d.%m.%Y %H:%M')}"
+    
+    def add_premium(self, user_id, days=30):
+        """Kullanıcıya premium üyelik ekle"""
+        # Mevcut bitiş tarihini kontrol et
+        if user_id in self.premium_users and self.is_premium(user_id):
+            # Mevcut süreye ekle
+            expiry_date = self.premium_users[user_id]['expiry_date'] + timedelta(days=days)
+        else:
+            # Yeni süre başlat
+            expiry_date = datetime.now() + timedelta(days=days)
+        
+        self.premium_users[user_id] = {
+            'expiry_date': expiry_date,
+            'trial_used': True,  # Deneme süresi kullanılmış sayılır
+            'subscription_type': 'premium'
+        }
+        
+        # Değişiklikleri kaydet
+        self.save_premium_users()
+        
+        return True, f"Premium üyeliğiniz {days} gün uzatıldı. Yeni bitiş tarihi: {expiry_date.strftime('%d.%m.%Y %H:%M')}"
+    
+    def get_premium_status(self, user_id):
+        """Kullanıcının premium durumunu döndür"""
+        if user_id not in self.premium_users:
+            return {
+                'is_premium': False,
+                'trial_used': False,
+                'message': "Premium üyeliğiniz bulunmamaktadır."
+            }
+        
+        user_data = self.premium_users[user_id]
+        is_premium = self.is_premium(user_id)
+        
+        if is_premium:
+            days_left = (user_data['expiry_date'] - datetime.now()).days
+            hours_left = ((user_data['expiry_date'] - datetime.now()).seconds // 3600)
+            
+            if user_data.get('subscription_type') == 'trial':
+                message = f"Deneme süreniz devam ediyor. {days_left} gün {hours_left} saat kaldı."
+            else:
+                message = f"Premium üyeliğiniz devam ediyor. {days_left} gün {hours_left} saat kaldı."
+        else:
+            if user_data.get('trial_used', False):
+                message = "Premium üyeliğiniz sona ermiştir."
+            else:
+                message = "Premium üyeliğiniz bulunmamaktadır."
+        
+        return {
+            'is_premium': is_premium,
+            'trial_used': user_data.get('trial_used', False),
+            'expiry_date': user_data.get('expiry_date'),
+            'subscription_type': user_data.get('subscription_type', 'none'),
+            'message': message
+        }
+
 class TelegramBot:
     def __init__(self, token: str):
         """Initialize the bot with API keys and configuration"""
         # Initialize logger
         self.logger = setup_logger('CoinScanner')
         self.logger.info("Telegram Bot başlatılıyor...")
+        
+        # Initialize premium manager
+        self.premium_manager = PremiumManager(self.logger)
         
         # Initialize technical analysis module
         self.analyzer = MarketAnalyzer(self.logger)
@@ -195,6 +376,13 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("analyze", self.cmd_analyze))
         self.application.add_handler(CommandHandler("stats", self.stats_command))
         
+        # Premium komutları
+        self.application.add_handler(CommandHandler("premium", self.premium_command))
+        self.application.add_handler(CommandHandler("trial", self.trial_command))
+        
+        # Admin komutları
+        self.application.add_handler(CommandHandler("addpremium", self.add_premium_command))
+        
         # Takip durdurma komutu
         self.application.add_handler(CommandHandler("stoptrack", self.stop_track_command))
         
@@ -263,9 +451,23 @@ class TelegramBot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start komutunu işle"""
         try:
+            user_id = update.effective_user.id
+            status = self.premium_manager.get_premium_status(user_id)
+            
+            # Premium durumuna göre mesajı özelleştir
+            premium_text = ""
+            if status['is_premium']:
+                premium_text = f"⭐ Premium üyeliğiniz aktif! Bitiş tarihi: {status['expiry_date'].strftime('%d.%m.%Y')}\n\n"
+            else:
+                if not status['trial_used']:
+                    premium_text = "🎁 3 günlük ücretsiz deneme sürenizi başlatmak için /trial komutunu kullanabilirsiniz.\n\n"
+                else:
+                    premium_text = "💰 Premium üyelik için /premium komutunu kullanabilirsiniz.\n\n"
+            
             await update.message.reply_text(
                 f"👋 Merhaba {update.effective_user.first_name}!\n\n"
                 "🤖 Kripto Para Sinyal Botuna hoş geldiniz!\n\n"
+                f"{premium_text}"
                 "📊 Bu bot, kripto para piyasasını analiz eder ve alım/satım fırsatlarını tespit eder.\n\n"
                 "🔍 /scan komutu ile piyasayı tarayabilir,\n"
                 "📈 /track komutu ile coinleri takip edebilirsiniz.\n\n"
@@ -303,22 +505,34 @@ class TelegramBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Help komutunu işle"""
         try:
+            user_id = update.effective_user.id
+            is_premium = self.premium_manager.is_premium(user_id)
+            
+            # Premium durumuna göre mesajı özelleştir
+            premium_text = ""
+            if not is_premium:
+                premium_text = "⭐ Premium özellikler için /premium komutunu kullanabilirsiniz.\n\n"
+            
             await update.message.reply_text(
                 "📚 KOMUT KILAVUZU\n\n"
-                "🔍 /scan - Piyasayı tara ve fırsatları bul\n"
-                "   /scan scan15 - 15 dakikalık hızlı al-çık fırsatları\n"
-                "   /scan scan4 - 4 saatlik tarama\n\n"
-                "📈 /track - Bir coini takip et\n"
-                "   /track 1 - Tarama sonucundan 1. coini takip et\n"
-                "   /track BTCUSDT - BTC'yi direkt takip et\n\n"
-                "🛑 /stoptrack - Takip edilen coinleri durdur\n"
-                "   /stoptrack - Takip edilen coinleri listele ve seç\n"
-                "   /stoptrack BTCUSDT - BTC takibini durdur\n\n"
-                "📊 /chart BTCUSDT - Teknik analiz grafiği oluştur\n\n"
-                "🔬 /analyze BTCUSDT - Detaylı coin analizi yap\n\n"
-                "📊 /stats - Başarı istatistiklerini göster\n\n"
-                "❌ /stop - Tüm takipleri durdur\n\n"
-                "❓ /help - Bu yardım menüsünü göster"
+                f"{premium_text}"
+                "🔍 /scan - Piyasayı tara ve fırsatları bul ⭐\n"
+                "   /scan scan15 - 15 dakikalık hızlı al-çık fırsatları ⭐\n"
+                "   /scan scan4 - 4 saatlik tarama ⭐\n\n"
+                "📈 /track - Bir coini takip et ⭐\n"
+                "   /track 1 - Tarama sonucundan 1. coini takip et ⭐\n"
+                "   /track BTCUSDT - BTC'yi direkt takip et ⭐\n\n"
+                "🛑 /stoptrack - Takip edilen coinleri durdur ⭐\n"
+                "   /stoptrack - Takip edilen coinleri listele ve seç ⭐\n"
+                "   /stoptrack BTCUSDT - BTC takibini durdur ⭐\n\n"
+                "📊 /chart BTCUSDT - Teknik analiz grafiği oluştur ⭐\n\n"
+                "🔬 /analyze BTCUSDT - Detaylı coin analizi yap ⭐\n\n"
+                "📊 /stats - Başarı istatistiklerini göster ⭐\n\n"
+                "❌ /stop - Tüm takipleri durdur ⭐\n\n"
+                "⭐ /premium - Premium üyelik bilgilerini göster\n"
+                "🎁 /trial - 3 günlük deneme süresini başlat\n\n"
+                "❓ /help - Bu yardım menüsünü göster\n\n"
+                "⭐ işaretli komutlar premium üyelik gerektirir."
             )
         except Exception as e:
             self.logger.error(f"Help komutu hatası: {e}")
@@ -450,8 +664,9 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Analiz yapılırken bir hata oluştu: {str(e)}")
 
     @telegram_retry()
+    @premium_required
     async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Scan komutunu işle"""
+        """Scan komutunu işle - Premium gerektirir"""
         try:
             chat_id = update.effective_chat.id
             
@@ -518,6 +733,7 @@ class TelegramBot:
             
             callback_data = query.data
             chat_id = query.message.chat_id
+            user_id = query.from_user.id
             
             self.logger.info(f"Callback alındı: {callback_data} - {chat_id}")
             
@@ -536,6 +752,22 @@ class TelegramBot:
                 scan_type = callback_data.split("_")[1]
                 await self.refresh_scan_callback(update, context, scan_type)
                 
+            # Premium butonları
+            elif callback_data == "start_trial":
+                success, message = self.premium_manager.start_trial(user_id)
+                await query.edit_message_text(text=f"🎁 {message}")
+                
+            elif callback_data == "premium_info":
+                status = self.premium_manager.get_premium_status(user_id)
+                await query.edit_message_text(
+                    text="💰 Premium Üyelik Bilgileri\n\n"
+                         "Premium üyelik ile tüm özelliklere sınırsız erişim kazanırsınız.\n\n"
+                         "Aylık: 99₺\n"
+                         "3 Aylık: 249₺\n"
+                         "Yıllık: 899₺\n\n"
+                         "Ödeme için: @admin ile iletişime geçin."
+                )
+                
         except Exception as e:
             self.logger.error(f"Callback işleme hatası: {e}")
             try:
@@ -545,8 +777,10 @@ class TelegramBot:
             except:
                 pass
 
+    @telegram_retry()
+    @premium_required
     async def track_button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE, index=None):
-        """Takip butonuna tıklandığında çalışır"""
+        """Takip butonuna tıklandığında çalışır - Premium gerektirir"""
         try:
             query = update.callback_query
             chat_id = query.message.chat_id
@@ -1049,6 +1283,8 @@ class TelegramBot:
                         text=f"✅ {symbol} takibi durduruldu!"
                     )
                     
+            self.logger.info(f"{chat_id} için takip durdurma işlemi tamamlandı")
+                
         except Exception as e:
             self.logger.error(f"Stop track callback hatası: {e}")
             try:
@@ -1264,6 +1500,123 @@ class TelegramBot:
                 
         except Exception as e:
             self.logger.error(f"Akıllı takip görevi hatası ({symbol}): {e}")
+
+    @telegram_retry()
+    @premium_required
+    async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Premium bilgilerini göster"""
+        try:
+            user_id = update.effective_user.id
+            status = self.premium_manager.get_premium_status(user_id)
+            
+            # Premium bilgilerini göster
+            message = "⭐ **PREMIUM ÜYELİK BİLGİLERİ** ⭐\n\n"
+            
+            if status['is_premium']:
+                # Premium kullanıcı
+                days_left = (status['expiry_date'] - datetime.now()).days
+                hours_left = ((status['expiry_date'] - datetime.now()).seconds // 3600)
+                
+                message += f"✅ Premium üyeliğiniz aktif!\n"
+                message += f"📅 Bitiş Tarihi: {status['expiry_date'].strftime('%d.%m.%Y %H:%M')}\n"
+                message += f"⏱️ Kalan Süre: {days_left} gün {hours_left} saat\n\n"
+                
+                if status['subscription_type'] == 'trial':
+                    message += "🎁 Şu anda deneme sürümünü kullanıyorsunuz.\n"
+                    message += "💰 Deneme süreniz bittiğinde premium üyelik satın alabilirsiniz.\n"
+                else:
+                    message += "🌟 Premium üyeliğiniz için teşekkür ederiz!\n"
+            else:
+                # Premium olmayan kullanıcı
+                message += "❌ Premium üyeliğiniz bulunmamaktadır.\n\n"
+                
+                if not status['trial_used']:
+                    message += "🎁 3 günlük ücretsiz deneme sürenizi başlatmak için /trial komutunu kullanabilirsiniz.\n\n"
+                
+                message += "💰 Premium üyelik avantajları:\n"
+                message += "• Sınırsız coin takibi\n"
+                message += "• Gelişmiş tarama özellikleri\n"
+                message += "• Özel teknik analiz grafikleri\n"
+                message += "• Öncelikli destek\n\n"
+                
+                message += "📱 Premium üyelik için iletişim:\n"
+                message += "• Telegram: @YourTelegramUsername\n"
+                message += "• E-posta: your.email@example.com\n"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            self.logger.error(f"Premium komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ Premium bilgileri gösterilirken bir hata oluştu!"
+            )
+
+    @telegram_retry()
+    async def trial_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Deneme süresini başlat"""
+        try:
+            user_id = update.effective_user.id
+            
+            # Deneme süresini başlat
+            success, message = self.premium_manager.start_trial(user_id)
+            
+            if success:
+                await update.message.reply_text(
+                    f"🎁 {message}\n\n"
+                    "⭐ Deneme süreniz boyunca tüm premium özelliklere erişebilirsiniz.\n"
+                    "📊 /scan komutu ile piyasayı tarayabilir,\n"
+                    "📈 /track komutu ile coinleri takip edebilirsiniz.\n\n"
+                    "❓ Tüm komutları görmek için /help yazabilirsiniz."
+                )
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+        except Exception as e:
+            self.logger.error(f"Trial komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ Deneme süresi başlatılırken bir hata oluştu!"
+            )
+
+    @telegram_retry()
+    async def add_premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin komutu: Kullanıcıya premium ekle"""
+        try:
+            # Komutu gönderen kişi admin mi kontrol et
+            admin_ids = [123456789]  # Admin kullanıcı ID'lerini buraya ekleyin
+            user_id = update.effective_user.id
+            
+            if user_id not in admin_ids:
+                await update.message.reply_text("❌ Bu komutu kullanma yetkiniz yok!")
+                return
+            
+            # Komut parametrelerini kontrol et
+            if not context.args or len(context.args) < 2:
+                await update.message.reply_text(
+                    "❌ Eksik parametreler!\n\n"
+                    "Kullanım: /addpremium <user_id> <days>"
+                )
+                return
+            
+            try:
+                target_user_id = int(context.args[0])
+                days = int(context.args[1])
+            except ValueError:
+                await update.message.reply_text("❌ Geçersiz parametreler! User ID ve gün sayısı sayı olmalıdır.")
+                return
+            
+            # Premium ekle
+            success, message = self.premium_manager.add_premium(target_user_id, days)
+            
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+        except Exception as e:
+            self.logger.error(f"Add premium komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ Premium ekleme sırasında bir hata oluştu!"
+            )
 
 if __name__ == '__main__':
     # Önceki bot instance'larını temizle
