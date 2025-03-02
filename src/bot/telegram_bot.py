@@ -194,6 +194,12 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("chart", self.cmd_chart))
         self.application.add_handler(CommandHandler("analyze", self.cmd_analyze))
         self.application.add_handler(CommandHandler("stats", self.stats_command))
+        
+        # Takip durdurma komutu
+        self.application.add_handler(CommandHandler("stoptrack", self.stop_track_command))
+        
+        # Callback handlers - bunları başlangıçta kaydet
+        self.application.add_handler(CallbackQueryHandler(self.handle_callback_query))
     
     async def error_handler(self, update, context):
         """Hataları işle"""
@@ -305,6 +311,9 @@ class TelegramBot:
                 "📈 /track - Bir coini takip et\n"
                 "   /track 1 - Tarama sonucundan 1. coini takip et\n"
                 "   /track BTCUSDT - BTC'yi direkt takip et\n\n"
+                "🛑 /stoptrack - Takip edilen coinleri durdur\n"
+                "   /stoptrack - Takip edilen coinleri listele ve seç\n"
+                "   /stoptrack BTCUSDT - BTC takibini durdur\n\n"
                 "📊 /chart BTCUSDT - Teknik analiz grafiği oluştur\n\n"
                 "🔬 /analyze BTCUSDT - Detaylı coin analizi yap\n\n"
                 "📊 /stats - Başarı istatistiklerini göster\n\n"
@@ -454,7 +463,7 @@ class TelegramBot:
             # Kullanıcıya bilgi ver
             await update.message.reply_text(
                 f"🔍 Piyasa taranıyor...\n"
-                f"⏳ Lütfen bekleyin..."
+                f"⏳ Lütfen bekleyin, bu işlem birkaç dakika sürebilir..."
             )
             
             # Tarama tipine göre işlem yap
@@ -466,7 +475,10 @@ class TelegramBot:
                 if not opportunities or len(opportunities) == 0:
                     await update.message.reply_text(
                         "❌ Şu anda uygun al-çık fırsatı bulunamadı!\n"
-                        "Lütfen daha sonra tekrar deneyin."
+                        "Lütfen daha sonra tekrar deneyin.\n\n"
+                        "💡 İPUCU: Piyasa koşulları sürekli değişir. Farklı tarama tipleri deneyebilirsiniz:\n"
+                        "• /scan scan4 - 4 saatlik tarama\n"
+                        "• /scan - Genel tarama"
                     )
                     return
                 
@@ -474,49 +486,7 @@ class TelegramBot:
                 self.last_scan_results[chat_id] = opportunities
                 
                 # Sonuçları formatla ve gönder
-                message = "⚡ **HIZLI AL-ÇIK FIRSATLARI (15dk)** ⚡\n\n"
-                
-                for i, opportunity in enumerate(opportunities):
-                    symbol = opportunity['symbol']
-                    signal = opportunity['signal']
-                    price = opportunity['current_price']
-                    score = opportunity['opportunity_score']
-                    success_prob = opportunity['success_probability']
-                    entry_strategy = opportunity.get('entry_strategy', 'N/A')
-                    exit_strategy = opportunity.get('exit_strategy', 'N/A')
-                    
-                    message += f"**{i+1}. {symbol}** - {signal}\n"
-                    message += f"💰 Fiyat: {price:.6f}\n"
-                    message += f"⭐ Puan: {score}/100\n"
-                    message += f"✅ Başarı Olasılığı: {success_prob}\n"
-                    message += f"📥 Giriş: {entry_strategy}\n"
-                    message += f"📤 Çıkış: {exit_strategy}\n"
-                    
-                    # Hedefler
-                    if 'target1' in opportunity and 'target2' in opportunity:
-                        target1 = opportunity['target1']
-                        target2 = opportunity['target2']
-                        
-                        if 'LONG' in signal:
-                            message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} ➡️ {target2:.6f}\n"
-                        else:
-                            message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} ➡️ {target2:.6f}\n"
-                    
-                    # Stop loss
-                    if 'stop_price' in opportunity:
-                        stop = opportunity['stop_price']
-                        message += f"🛑 Stop: {stop:.6f}\n"
-                    
-                    # Tahmini süre
-                    if 'estimated_time' in opportunity:
-                        message += f"⏱️ Tahmini Süre: {opportunity['estimated_time']}\n"
-                    
-                    message += "\n"
-                
-                message += "📊 Takip etmek için: /track <numara>\n"
-                message += "📈 Grafik için: /chart <sembol>"
-                
-                await update.message.reply_text(message, parse_mode='Markdown')
+                await self.send_scan_results(chat_id, opportunities, scan_type)
                 
             elif scan_type == "scan4":
                 # 4 saatlik tarama
@@ -536,7 +506,331 @@ class TelegramBot:
         except Exception as e:
             self.logger.error(f"Scan komutu hatası: {e}")
             await update.message.reply_text(
-                "❌ Tarama sırasında bir hata oluştu!"
+                "❌ Tarama sırasında bir hata oluştu!\n"
+                "Lütfen daha sonra tekrar deneyin."
+            )
+
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Tüm callback query'leri işle"""
+        try:
+            query = update.callback_query
+            await query.answer()
+            
+            callback_data = query.data
+            chat_id = query.message.chat_id
+            
+            self.logger.info(f"Callback alındı: {callback_data} - {chat_id}")
+            
+            # Track butonları
+            if callback_data.startswith("track_"):
+                index = int(callback_data.split("_")[1])
+                await self.track_button_callback(update, context, index)
+            
+            # Stop track butonları
+            elif callback_data.startswith("stoptrack_"):
+                symbol_or_all = callback_data.split("_")[1]
+                await self.stop_track_callback_handler(update, context, symbol_or_all)
+            
+            # Tarama yenileme butonu
+            elif callback_data.startswith("refresh_"):
+                scan_type = callback_data.split("_")[1]
+                await self.refresh_scan_callback(update, context, scan_type)
+                
+        except Exception as e:
+            self.logger.error(f"Callback işleme hatası: {e}")
+            try:
+                await update.callback_query.message.reply_text(
+                    "❌ İşlem sırasında bir hata oluştu!"
+                )
+            except:
+                pass
+
+    async def track_button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE, index=None):
+        """Takip butonuna tıklandığında çalışır"""
+        try:
+            query = update.callback_query
+            chat_id = query.message.chat_id
+            
+            # Index callback_data'dan gelmiyorsa, direkt olarak al
+            if index is None:
+                callback_data = query.data
+                index = int(callback_data.split("_")[1])
+            
+            # Tarama sonuçlarını kontrol et
+            if chat_id not in self.last_scan_results or not self.last_scan_results[chat_id]:
+                await query.edit_message_text(
+                    text="❌ Tarama sonuçları bulunamadı! Lütfen yeni bir tarama yapın."
+                )
+                return
+            
+            opportunities = self.last_scan_results[chat_id]
+            
+            # Index kontrolü
+            if index < 1 or index > len(opportunities):
+                await query.edit_message_text(
+                    text="❌ Geçersiz seçim! Lütfen yeni bir tarama yapın."
+                )
+                return
+            
+            # Seçilen fırsatı al
+            opportunity = opportunities[index-1]
+            symbol = opportunity['symbol']
+            
+            # Takip verilerini hazırla
+            current_price = opportunity['current_price']
+            signal = opportunity['signal']
+            stop_price = opportunity.get('stop_price', current_price * 0.95)  # Varsayılan stop
+            target1 = opportunity.get('target1', current_price * 1.05)  # Varsayılan hedef 1
+            target2 = opportunity.get('target2', current_price * 1.10)  # Varsayılan hedef 2
+            
+            # Takip verilerini kaydet
+            if chat_id not in self.tracked_coins:
+                self.tracked_coins[chat_id] = {}
+            
+            self.tracked_coins[chat_id][symbol] = {
+                'entry_price': current_price,
+                'signal': signal,
+                'stop_price': stop_price,
+                'target1': target1,
+                'target2': target2,
+                'start_time': datetime.now(),
+                'last_update': datetime.now()
+            }
+            
+            # Takip görevlerini başlat
+            if chat_id not in self.track_tasks:
+                self.track_tasks[chat_id] = {}
+            
+            # Eğer zaten takip ediliyorsa, önceki görevi iptal et
+            if symbol in self.track_tasks[chat_id] and not self.track_tasks[chat_id][symbol].done():
+                self.track_tasks[chat_id][symbol].cancel()
+            
+            # Yeni takip görevi oluştur
+            self.track_tasks[chat_id][symbol] = asyncio.create_task(
+                self.smart_tracking_task(chat_id, symbol)
+            )
+            
+            # Kullanıcıya bilgi ver
+            await query.edit_message_text(
+                text=f"✅ {symbol} takibi başlatıldı!\n\n"
+                     f"💰 Giriş Fiyatı: ${current_price:.6f}\n"
+                     f"🎯 Hedef 1: ${target1:.6f}\n"
+                     f"🎯 Hedef 2: ${target2:.6f}\n"
+                     f"🛑 Stop Loss: ${stop_price:.6f}\n\n"
+                     f"📊 Her 30 saniyede bir güncellemeler alacaksınız.\n"
+                     f"❌ Takibi durdurmak için /stoptrack komutunu kullanabilirsiniz."
+            )
+            
+            self.logger.info(f"{chat_id} için {symbol} takibi başlatıldı")
+            
+        except Exception as e:
+            self.logger.error(f"Track button callback hatası: {e}")
+            try:
+                await query.edit_message_text(
+                    text="❌ Takip başlatılırken bir hata oluştu!"
+                )
+            except:
+                pass
+
+    async def stop_track_callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE, symbol_or_all=None):
+        """Takibi durdur butonuna tıklandığında çalışır"""
+        try:
+            query = update.callback_query
+            chat_id = query.message.chat_id
+            
+            # symbol_or_all callback_data'dan gelmiyorsa, direkt olarak al
+            if symbol_or_all is None:
+                callback_data = query.data
+                symbol_or_all = callback_data.split("_")[1]
+            
+            if symbol_or_all == "all":
+                # Tüm takipleri durdur
+                if chat_id in self.tracked_coins:
+                    symbols = list(self.tracked_coins[chat_id].keys())
+                    for symbol in symbols:
+                        await self.stop_tracking(chat_id, symbol)
+                    
+                    await query.edit_message_text(
+                        text="✅ Tüm takipler durduruldu!"
+                    )
+            else:
+                # Belirli bir coini durdur
+                symbol = symbol_or_all
+                await self.stop_tracking(chat_id, symbol)
+                
+                await query.edit_message_text(
+                    text=f"✅ {symbol} takibi durduruldu!"
+                )
+                
+            self.logger.info(f"{chat_id} için takip durdurma işlemi tamamlandı")
+                
+        except Exception as e:
+            self.logger.error(f"Stop track callback hatası: {e}")
+            try:
+                await query.edit_message_text(
+                    text="❌ Takip durdurulurken bir hata oluştu!"
+                )
+            except:
+                pass
+
+    async def refresh_scan_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE, scan_type=None):
+        """Taramayı yenile butonuna tıklandığında çalışır"""
+        try:
+            query = update.callback_query
+            chat_id = query.message.chat_id
+            
+            # scan_type callback_data'dan gelmiyorsa, direkt olarak al
+            if scan_type is None:
+                callback_data = query.data
+                scan_type = callback_data.split("_")[1]
+            
+            # Kullanıcıya bilgi ver
+            await query.edit_message_text(
+                text=f"🔍 Piyasa yeniden taranıyor...\n"
+                     f"⏳ Lütfen bekleyin..."
+            )
+            
+            # Tarama tipine göre işlem yap
+            if scan_type == "scan15":
+                opportunities = await self.analyzer.scan15()
+            elif scan_type == "scan4":
+                opportunities = await self.analyzer.scan4h()
+            else:
+                opportunities = await self.scan_handler.scan_market()
+            
+            # Sonuçları işle
+            if not opportunities or len(opportunities) == 0:
+                await query.message.reply_text(
+                    "❌ Şu anda uygun fırsat bulunamadı!\n"
+                    "Lütfen daha sonra tekrar deneyin."
+                )
+                return
+            
+            # Sonuçları kaydet
+            self.last_scan_results[chat_id] = opportunities
+            
+            # Yeni bir mesaj gönder (edit_message_text karakter sınırını aşabilir)
+            await self.send_scan_results(chat_id, opportunities, scan_type)
+            
+        except Exception as e:
+            self.logger.error(f"Refresh scan callback hatası: {e}")
+            try:
+                await query.message.reply_text(
+                    "❌ Tarama yenilenirken bir hata oluştu!"
+                )
+            except:
+                pass
+
+    async def send_scan_results(self, chat_id, opportunities, scan_type):
+        """Tarama sonuçlarını gönder"""
+        try:
+            # Sonuçları formatla
+            if scan_type == "scan15":
+                message = "⚡ **HIZLI AL-ÇIK FIRSATLARI (15dk)** ⚡\n\n"
+                message += "📈 Bu fırsatlar kısa vadeli al-çık stratejisi için uygundur.\n"
+                message += "⏱️ Tahmini işlem süresi: 15 dakika - 4 saat\n"
+                message += "⚠️ Risk seviyesi: Orta-Yüksek\n\n"
+            elif scan_type == "scan4":
+                message = "📊 **4 SAATLİK TARAMA SONUÇLARI** 📊\n\n"
+                message += "📈 Bu fırsatlar orta vadeli strateji için uygundur.\n"
+                message += "⏱️ Tahmini işlem süresi: 4 saat - 1 gün\n"
+                message += "⚠️ Risk seviyesi: Orta\n\n"
+            else:
+                message = "🔍 **GENEL TARAMA SONUÇLARI** 🔍\n\n"
+                message += "📈 Bu sonuçlar genel piyasa durumunu gösterir.\n"
+                message += "⚠️ Her zaman kendi analizinizi yapın.\n\n"
+            
+            # Fırsatları ekle
+            for i, opportunity in enumerate(opportunities):
+                symbol = opportunity['symbol']
+                signal = opportunity.get('signal', 'N/A')
+                price = opportunity.get('current_price', opportunity.get('price', 0))
+                score = opportunity.get('opportunity_score', opportunity.get('score', 0))
+                
+                message += f"**{i+1}. {symbol}** - {signal}\n"
+                message += f"💰 Fiyat: {price:.6f}\n"
+                
+                if score:
+                    message += f"⭐ Puan: {score}/100\n"
+                
+                # Diğer bilgileri ekle (varsa)
+                for key, emoji in [
+                    ('success_probability', '✅'),
+                    ('entry_strategy', '📥'),
+                    ('exit_strategy', '📤'),
+                    ('risk_reward', '⚖️'),
+                    ('estimated_time', '⏱️'),
+                    ('rsi', '📊')
+                ]:
+                    if key in opportunity:
+                        message += f"{emoji} {key.replace('_', ' ').title()}: {opportunity[key]}\n"
+                
+                # Hedefler
+                if 'target1' in opportunity and 'target2' in opportunity:
+                    target1 = opportunity['target1']
+                    target2 = opportunity['target2']
+                    
+                    if 'LONG' in signal:
+                        t1_pct = ((target1 - price) / price) * 100
+                        t2_pct = ((target2 - price) / price) * 100
+                        message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} (%{t1_pct:.2f}) ➡️ {target2:.6f} (%{t2_pct:.2f})\n"
+                    else:
+                        t1_pct = ((price - target1) / price) * 100
+                        t2_pct = ((price - target2) / price) * 100
+                        message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} (%{t1_pct:.2f}) ➡️ {target2:.6f} (%{t2_pct:.2f})\n"
+                
+                # Stop loss
+                if 'stop_price' in opportunity:
+                    stop = opportunity['stop_price']
+                    stop_pct = abs(((stop - price) / price) * 100)
+                    message += f"🛑 Stop: {stop:.6f} (%{stop_pct:.2f})\n"
+                
+                message += "\n"
+            
+            # Butonları oluştur
+            keyboard = []
+            row = []
+            for i, opportunity in enumerate(opportunities):
+                symbol = opportunity['symbol']
+                button_text = f"📊 {i+1}. {symbol} Takip Et"
+                callback_data = f"track_{i+1}"
+                
+                # Her satırda 2 buton olacak şekilde düzenle
+                if i % 2 == 0 and i > 0:
+                    keyboard.append(row)
+                    row = []
+                
+                row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
+            
+            # Son satırı ekle
+            if row:
+                keyboard.append(row)
+            
+            # Yenile butonu ekle
+            keyboard.append([InlineKeyboardButton("🔄 Taramayı Yenile", callback_data=f"refresh_{scan_type}")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Kullanım ipuçları ekle
+            message += "💡 İPUÇLARI:\n"
+            message += "• Takip etmek istediğiniz coini seçin\n"
+            message += "• Takip sırasında 30 saniyede bir güncellemeler alacaksınız\n"
+            message += "• Takibi durdurmak için /stoptrack komutunu kullanın\n"
+            message += "• Yeni bir tarama için 'Taramayı Yenile' butonunu kullanın\n"
+            
+            # Mesajı gönder
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Tarama sonuçları gönderme hatası: {e}")
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text="❌ Tarama sonuçları gönderilirken bir hata oluştu!"
             )
 
     @telegram_retry()
@@ -653,6 +947,323 @@ class TelegramBot:
             await update.message.reply_text(
                 "❌ İstatistikler alınırken bir hata oluştu!"
             )
+
+    @telegram_retry()
+    async def stop_track_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Belirli bir coinin takibini durdur"""
+        try:
+            chat_id = update.effective_chat.id
+            
+            # Eğer takip edilen coin yoksa
+            if chat_id not in self.tracked_coins or not self.tracked_coins[chat_id]:
+                await update.message.reply_text(
+                    "❌ Takip edilen coin bulunamadı!"
+                )
+                return
+            
+            # Argüman kontrolü
+            if not context.args:
+                # Takip edilen coinleri listele ve seçim yapmasını iste
+                tracked_symbols = list(self.tracked_coins[chat_id].keys())
+                
+                if not tracked_symbols:
+                    await update.message.reply_text(
+                        "❌ Takip edilen coin bulunamadı!"
+                    )
+                    return
+                
+                # Butonları oluştur
+                keyboard = []
+                row = []
+                
+                for i, symbol in enumerate(tracked_symbols):
+                    button_text = f"🛑 {symbol} Takibi Durdur"
+                    callback_data = f"stoptrack_{symbol}"
+                    
+                    # Her satırda 1 buton olacak şekilde düzenle
+                    row = [InlineKeyboardButton(button_text, callback_data=callback_data)]
+                    keyboard.append(row)
+                
+                # Tümünü durdur butonu
+                keyboard.append([InlineKeyboardButton("🛑 Tüm Takipleri Durdur", callback_data="stoptrack_all")])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    "📊 Takip edilen coinler:\n\n" + 
+                    "\n".join([f"• {symbol}" for symbol in tracked_symbols]) + 
+                    "\n\nDurdurmak istediğiniz coini seçin:",
+                    reply_markup=reply_markup
+                )
+                
+                # Callback handler ekle
+                self.application.add_handler(CallbackQueryHandler(self.stop_track_callback))
+                
+            else:
+                # Belirli bir coini durdur
+                symbol = context.args[0].upper()
+                if not symbol.endswith('USDT'):
+                    symbol += 'USDT'
+                
+                await self.stop_tracking(chat_id, symbol)
+                
+                await update.message.reply_text(
+                    f"✅ {symbol} takibi durduruldu!"
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Stop track komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ Takip durdurulurken bir hata oluştu!"
+            )
+
+    @telegram_retry()
+    async def stop_track_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Takibi durdur butonuna tıklandığında çalışır"""
+        try:
+            query = update.callback_query
+            await query.answer()
+            
+            chat_id = query.message.chat_id
+            callback_data = query.data
+            
+            if callback_data.startswith("stoptrack_"):
+                symbol_or_all = callback_data.split("_")[1]
+                
+                if symbol_or_all == "all":
+                    # Tüm takipleri durdur
+                    if chat_id in self.tracked_coins:
+                        symbols = list(self.tracked_coins[chat_id].keys())
+                        for symbol in symbols:
+                            await self.stop_tracking(chat_id, symbol)
+                        
+                        await query.edit_message_text(
+                            text="✅ Tüm takipler durduruldu!"
+                        )
+                else:
+                    # Belirli bir coini durdur
+                    symbol = symbol_or_all
+                    await self.stop_tracking(chat_id, symbol)
+                    
+                    await query.edit_message_text(
+                        text=f"✅ {symbol} takibi durduruldu!"
+                    )
+                    
+        except Exception as e:
+            self.logger.error(f"Stop track callback hatası: {e}")
+            try:
+                await query.edit_message_text(
+                    text="❌ Takip durdurulurken bir hata oluştu!"
+                )
+            except:
+                pass
+
+    async def stop_tracking(self, chat_id: int, symbol: str):
+        """Belirli bir coinin takibini durdur"""
+        try:
+            # Takip görevini iptal et
+            if chat_id in self.track_tasks and symbol in self.track_tasks[chat_id]:
+                task = self.track_tasks[chat_id][symbol]
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                
+                # Takip listesinden kaldır
+                del self.track_tasks[chat_id][symbol]
+            
+            # Takip verilerini temizle
+            if chat_id in self.tracked_coins and symbol in self.tracked_coins[chat_id]:
+                del self.tracked_coins[chat_id][symbol]
+            
+            self.logger.info(f"{chat_id} için {symbol} takibi durduruldu")
+            
+        except Exception as e:
+            self.logger.error(f"Takip durdurma hatası ({symbol}): {e}")
+            raise
+
+    async def smart_tracking_task(self, chat_id: int, symbol: str):
+        """Akıllı takip görevi - 30 saniyede bir bildirim gönderir"""
+        try:
+            # Takip başlangıç mesajı
+            start_message = (
+                f"🚀 {symbol} TAKİBİ BAŞLATILDI\n\n"
+                f"📊 Her 30 saniyede bir güncellemeler alacaksınız.\n"
+                f"🔍 Takip, duygusal kararlar vermenizi önlemeye yardımcı olacak.\n"
+                f"⚠️ Takibi durdurmak için /stoptrack komutunu kullanabilirsiniz.\n\n"
+                f"💡 İPUÇLARI:\n"
+                f"• Planınıza sadık kalın\n"
+                f"• Stop-loss seviyelerine uyun\n"
+                f"• Kâr hedeflerinize ulaştığınızda çıkın\n"
+                f"• Piyasa koşulları değişebilir, esnek olun"
+            )
+            
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=start_message
+            )
+            
+            # Takip sayacı
+            update_count = 0
+            
+            while True:
+                # 30 saniye bekle
+                await asyncio.sleep(30)
+                update_count += 1
+                
+                # Coin verilerini güncelle
+                try:
+                    # Exchange bağlantısı
+                    exchange = ccxt.binance({
+                        'enableRateLimit': True,
+                        'options': {
+                            'defaultType': 'spot'
+                        }
+                    })
+                    
+                    # Ticker verilerini al
+                    ticker = exchange.fetch_ticker(symbol)
+                    
+                    if not ticker:
+                        continue
+                    
+                    current_price = float(ticker['last'])
+                except Exception as e:
+                    self.logger.error(f"Ticker verisi alınamadı ({symbol}): {e}")
+                    continue
+                
+                # Takip verilerini al
+                if chat_id not in self.tracked_coins or symbol not in self.tracked_coins[chat_id]:
+                    self.logger.warning(f"{chat_id} için {symbol} takip verileri bulunamadı")
+                    return
+                
+                track_data = self.tracked_coins[chat_id][symbol]
+                entry_price = track_data['entry_price']
+                signal = track_data['signal']
+                stop_price = track_data['stop_price']
+                target1 = track_data['target1']
+                target2 = track_data['target2']
+                start_time = track_data['start_time']
+                
+                # Takip süresi
+                elapsed_time = datetime.now() - start_time
+                hours, remainder = divmod(elapsed_time.total_seconds(), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                time_str = f"{int(hours)}s {int(minutes)}dk {int(seconds)}sn"
+                
+                # Fiyat değişimini hesapla
+                price_change_pct = ((current_price - entry_price) / entry_price) * 100
+                
+                # Sinyal tipine göre kar/zarar durumunu belirle
+                is_profit = False
+                if 'LONG' in signal and price_change_pct > 0:
+                    is_profit = True
+                elif 'SHORT' in signal and price_change_pct < 0:
+                    is_profit = True
+                
+                # Mesajı oluştur
+                message = f"📊 {symbol} TAKİP GÜNCELLEMESI #{update_count}\n\n"
+                message += f"⏱️ Takip Süresi: {time_str}\n"
+                message += f"💰 Giriş Fiyatı: ${entry_price:.6f}\n"
+                message += f"💰 Güncel Fiyat: ${current_price:.6f}\n"
+                message += f"📈 Değişim: %{price_change_pct:.2f}\n\n"
+                
+                # Hedef ve stop bilgileri
+                message += f"🎯 Hedef 1: ${target1:.6f} (%{((target1-entry_price)/entry_price*100):.2f})\n"
+                message += f"🎯 Hedef 2: ${target2:.6f} (%{((target2-entry_price)/entry_price*100):.2f})\n"
+                message += f"🛑 Stop Loss: ${stop_price:.6f} (%{((stop_price-entry_price)/entry_price*100):.2f})\n\n"
+                
+                # Durum analizi
+                if is_profit:
+                    # Karda
+                    if 'LONG' in signal:
+                        if current_price >= target2:
+                            message += "✅ HEDEF 2'YE ULAŞILDI! Tüm pozisyonu kapatmanızı öneririm.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(price_change_pct)
+                        elif current_price >= target1:
+                            message += "✅ HEDEF 1'E ULAŞILDI! Pozisyonun bir kısmını kapatıp stop'u başabaşa çekmenizi öneririm.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(price_change_pct)
+                            message += "💡 Önerilen Aksiyon: Pozisyonun %50'sini kapat, stop'u başabaşa çek.\n"
+                        else:
+                            message += "✅ KARDA! Sabırlı olun, hedeflere doğru ilerliyoruz.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(price_change_pct)
+                            message += "💡 Önerilen Aksiyon: Hedef 1'e ulaşana kadar bekle.\n"
+                    else:  # SHORT
+                        if current_price <= target2:
+                            message += "✅ HEDEF 2'YE ULAŞILDI! Tüm pozisyonu kapatmanızı öneririm.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(abs(price_change_pct))
+                        elif current_price <= target1:
+                            message += "✅ HEDEF 1'E ULAŞILDI! Pozisyonun bir kısmını kapatıp stop'u başabaşa çekmenizi öneririm.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(abs(price_change_pct))
+                            message += "💡 Önerilen Aksiyon: Pozisyonun %50'sini kapat, stop'u başabaşa çek.\n"
+                        else:
+                            message += "✅ KARDA! Sabırlı olun, hedeflere doğru ilerliyoruz.\n"
+                            message += "💰 Kâr: %{:.2f}\n".format(abs(price_change_pct))
+                            message += "💡 Önerilen Aksiyon: Hedef 1'e ulaşana kadar bekle.\n"
+                else:
+                    # Zararda
+                    if ('LONG' in signal and current_price <= stop_price) or \
+                       ('SHORT' in signal and current_price >= stop_price):
+                        message += "❌ STOP LOSS NOKTASINA ULAŞILDI! Zararı kabul edin ve çıkın.\n"
+                        message += "💸 Zarar: %{:.2f}\n".format(abs(price_change_pct))
+                        message += "💡 Önerilen Aksiyon: Pozisyonu kapat, zararı kabul et.\n"
+                    else:
+                        # Zarar oranına göre uyarı
+                        if abs(price_change_pct) > 5:
+                            message += "⚠️ DİKKAT! %5'ten fazla zararda. Pozisyonunuzu gözden geçirin.\n"
+                            message += "💸 Zarar: %{:.2f}\n".format(abs(price_change_pct))
+                            message += "💡 Önerilen Aksiyon: Stop loss'u kontrol et, gerekirse pozisyonu kapat.\n"
+                        else:
+                            message += "⚠️ ZARARDA! Ancak henüz stop loss seviyesine ulaşılmadı. Sabırlı olun.\n"
+                            message += "💸 Zarar: %{:.2f}\n".format(abs(price_change_pct))
+                            message += "💡 Önerilen Aksiyon: Planına sadık kal, stop loss'a dikkat et.\n"
+                
+                # Duygusal karar vermeyi önleyici ipuçları
+                message += "\n💡 AKILLI KARAR İPUÇLARI:\n"
+                
+                if is_profit:
+                    message += "• Açgözlü olmayın, plana sadık kalın.\n"
+                    message += "• Hedeflere ulaştığınızda kârı realize edin.\n"
+                    message += "• Başarılı bir trade için kendinizi tebrik edin.\n"
+                else:
+                    message += "• Panik yapmayın, duygusal kararlar vermeyin.\n"
+                    message += "• Stop loss'a sadık kalın, zararı büyütmeyin.\n"
+                    message += "• Her trade bir öğrenme fırsatıdır.\n"
+                
+                message += "• Piyasa koşulları değişebilir, esnek olun.\n"
+                message += "• Takibi durdurmak için /stoptrack komutunu kullanın.\n"
+                
+                # Bildirimi gönder
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=message
+                )
+                
+                # Son güncelleme zamanını kaydet
+                self.tracked_coins[chat_id][symbol]['last_update'] = datetime.now()
+                
+        except asyncio.CancelledError:
+            self.logger.info(f"{chat_id} için {symbol} takibi iptal edildi")
+            
+            # Takip sonlandırma mesajı
+            try:
+                end_message = (
+                    f"🛑 {symbol} TAKİBİ SONLANDIRILDI\n\n"
+                    f"Takip ettiğiniz için teşekkürler!\n"
+                    f"Yeni fırsatlar için /scan komutunu kullanabilirsiniz."
+                )
+                
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=end_message
+                )
+            except:
+                pass
+                
+        except Exception as e:
+            self.logger.error(f"Akıllı takip görevi hatası ({symbol}): {e}")
 
 if __name__ == '__main__':
     # Önceki bot instance'larını temizle
