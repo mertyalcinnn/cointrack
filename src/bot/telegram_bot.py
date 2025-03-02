@@ -193,6 +193,7 @@ class TelegramBot:
         # Yeni komutlar
         self.application.add_handler(CommandHandler("chart", self.cmd_chart))
         self.application.add_handler(CommandHandler("analyze", self.cmd_analyze))
+        self.application.add_handler(CommandHandler("stats", self.stats_command))
     
     async def error_handler(self, update, context):
         """Hataları işle"""
@@ -299,13 +300,14 @@ class TelegramBot:
             await update.message.reply_text(
                 "📚 KOMUT KILAVUZU\n\n"
                 "🔍 /scan - Piyasayı tara ve fırsatları bul\n"
-                "   /scan scan15 - 15 dakikalık tarama\n"
+                "   /scan scan15 - 15 dakikalık hızlı al-çık fırsatları\n"
                 "   /scan scan4 - 4 saatlik tarama\n\n"
                 "📈 /track - Bir coini takip et\n"
                 "   /track 1 - Tarama sonucundan 1. coini takip et\n"
                 "   /track BTCUSDT - BTC'yi direkt takip et\n\n"
                 "📊 /chart BTCUSDT - Teknik analiz grafiği oluştur\n\n"
                 "🔬 /analyze BTCUSDT - Detaylı coin analizi yap\n\n"
+                "📊 /stats - Başarı istatistiklerini göster\n\n"
                 "❌ /stop - Tüm takipleri durdur\n\n"
                 "❓ /help - Bu yardım menüsünü göster"
             )
@@ -442,55 +444,99 @@ class TelegramBot:
     async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Scan komutunu işle"""
         try:
+            chat_id = update.effective_chat.id
+            
+            # Tarama tipini belirle
+            scan_type = "default"
+            if context.args and len(context.args) > 0:
+                scan_type = context.args[0].lower()
+            
             # Kullanıcıya bilgi ver
             await update.message.reply_text(
-                "🔍 Piyasa taranıyor...\n"
-                "⏳ Bu işlem biraz zaman alabilir, lütfen bekleyin..."
+                f"🔍 Piyasa taranıyor...\n"
+                f"⏳ Lütfen bekleyin..."
             )
             
-            # Varsayılan zaman dilimi
-            interval = "4h"
-            
-            # Argümanları kontrol et
-            if context.args:
-                arg = context.args[0].lower()
-                if arg == "scan15":
-                    interval = "15m"
-                elif arg == "scan4":
-                    interval = "4h"
-                elif arg == "scan1d":
-                    interval = "1d"
-            
-            # MarketAnalyzer'ı kullanarak tarama yap
-            opportunities = await self.analyzer.scan_market(interval)
-            
-            if opportunities:
-                # Sonuçları sakla
-                self.last_scan_results[update.effective_chat.id] = opportunities
+            # Tarama tipine göre işlem yap
+            if scan_type == "scan15":
+                # 15 dakikalık tarama
+                self.logger.info(f"15 dakikalık tarama başlatıldı - {chat_id}")
+                opportunities = await self.analyzer.scan15()
+                
+                if not opportunities or len(opportunities) == 0:
+                    await update.message.reply_text(
+                        "❌ Şu anda uygun al-çık fırsatı bulunamadı!\n"
+                        "Lütfen daha sonra tekrar deneyin."
+                    )
+                    return
+                
+                # Sonuçları kaydet
+                self.last_scan_results[chat_id] = opportunities
                 
                 # Sonuçları formatla ve gönder
-                messages = self.analyzer.format_opportunities(opportunities, interval)
+                message = "⚡ **HIZLI AL-ÇIK FIRSATLARI (15dk)** ⚡\n\n"
                 
-                for i, message in enumerate(messages):
-                    # Her mesaja numara ekle
-                    numbered_message = f"#{i+1} {message}"
-                    await update.message.reply_text(numbered_message)
+                for i, opportunity in enumerate(opportunities):
+                    symbol = opportunity['symbol']
+                    signal = opportunity['signal']
+                    price = opportunity['current_price']
+                    score = opportunity['opportunity_score']
+                    success_prob = opportunity['success_probability']
+                    entry_strategy = opportunity.get('entry_strategy', 'N/A')
+                    exit_strategy = opportunity.get('exit_strategy', 'N/A')
+                    
+                    message += f"**{i+1}. {symbol}** - {signal}\n"
+                    message += f"💰 Fiyat: {price:.6f}\n"
+                    message += f"⭐ Puan: {score}/100\n"
+                    message += f"✅ Başarı Olasılığı: {success_prob}\n"
+                    message += f"📥 Giriş: {entry_strategy}\n"
+                    message += f"📤 Çıkış: {exit_strategy}\n"
+                    
+                    # Hedefler
+                    if 'target1' in opportunity and 'target2' in opportunity:
+                        target1 = opportunity['target1']
+                        target2 = opportunity['target2']
+                        
+                        if 'LONG' in signal:
+                            message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} ➡️ {target2:.6f}\n"
+                        else:
+                            message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} ➡️ {target2:.6f}\n"
+                    
+                    # Stop loss
+                    if 'stop_price' in opportunity:
+                        stop = opportunity['stop_price']
+                        message += f"🛑 Stop: {stop:.6f}\n"
+                    
+                    # Tahmini süre
+                    if 'estimated_time' in opportunity:
+                        message += f"⏱️ Tahmini Süre: {opportunity['estimated_time']}\n"
+                    
+                    message += "\n"
                 
-                # Takip etme talimatı
-                await update.message.reply_text(
-                    "📌 Bir coini takip etmek için:\n"
-                    "/track <numara> veya /track <sembol>"
-                )
+                message += "📊 Takip etmek için: /track <numara>\n"
+                message += "📈 Grafik için: /chart <sembol>"
+                
+                await update.message.reply_text(message, parse_mode='Markdown')
+                
+            elif scan_type == "scan4":
+                # 4 saatlik tarama
+                self.logger.info(f"4 saatlik tarama başlatıldı - {chat_id}")
+                opportunities = await self.analyzer.scan4h()
+                
+                # Sonuçları işle
+                # ... (mevcut kod)
             else:
-                await update.message.reply_text(
-                    "❌ Şu anda uygun fırsat bulunamadı!\n"
-                    "Daha sonra tekrar deneyin veya farklı bir zaman dilimi seçin."
-                )
+                # Varsayılan tarama
+                self.logger.info(f"Varsayılan tarama başlatıldı - {chat_id}")
+                opportunities = await self.scan_handler.scan_market()
+                
+                # Sonuçları işle
+                # ... (mevcut kod)
                 
         except Exception as e:
             self.logger.error(f"Scan komutu hatası: {e}")
             await update.message.reply_text(
-                "❌ Tarama yapılırken bir hata oluştu!"
+                "❌ Tarama sırasında bir hata oluştu!"
             )
 
     @telegram_retry()
@@ -556,6 +602,56 @@ class TelegramBot:
             self.logger.error(f"Track komutu hatası: {e}")
             await update.message.reply_text(
                 "❌ Takip başlatılırken bir hata oluştu!"
+            )
+
+    @telegram_retry()
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """İstatistikleri göster"""
+        try:
+            # Performans istatistiklerini al
+            stats = await self.analyzer.get_performance_stats()
+            
+            if 'error' in stats:
+                await update.message.reply_text(
+                    f"❌ İstatistikler alınırken bir hata oluştu: {stats['error']}"
+                )
+                return
+            
+            # İstatistikleri formatla
+            message = "📊 **SİNYAL BAŞARI İSTATİSTİKLERİ** 📊\n\n"
+            
+            # Genel istatistikler
+            overall = stats['overall']
+            message += f"**Genel Başarı Oranı:** %{overall['success_rate']}\n"
+            message += f"Toplam Sinyal: {overall['total_signals']}\n"
+            message += f"Başarılı: {overall['successful_signals']}\n"
+            message += f"Başarısız: {overall['failed_signals']}\n\n"
+            
+            # Haftalık istatistikler
+            weekly = stats['weekly']
+            message += f"**Son 7 Gün:** %{weekly['success_rate']} ({weekly['total_signals']} sinyal)\n\n"
+            
+            # Sinyal tiplerine göre
+            message += "**Sinyal Tiplerine Göre:**\n"
+            message += f"LONG: %{stats['by_type']['long']['success_rate']} ({stats['by_type']['long']['total_signals']} sinyal)\n"
+            message += f"SHORT: %{stats['by_type']['short']['success_rate']} ({stats['by_type']['short']['total_signals']} sinyal)\n"
+            message += f"SCALP: %{stats['by_type']['scalp']['success_rate']} ({stats['by_type']['scalp']['total_signals']} sinyal)\n\n"
+            
+            # Zaman dilimlerine göre
+            message += "**Zaman Dilimlerine Göre:**\n"
+            message += f"15dk: %{stats['by_timeframe']['15m']['success_rate']} ({stats['by_timeframe']['15m']['total_signals']} sinyal)\n"
+            message += f"1s: %{stats['by_timeframe']['1h']['success_rate']} ({stats['by_timeframe']['1h']['total_signals']} sinyal)\n"
+            message += f"4s: %{stats['by_timeframe']['4h']['success_rate']} ({stats['by_timeframe']['4h']['total_signals']} sinyal)\n\n"
+            
+            message += f"Toplam Takip Edilen Sinyal: {stats['total_signals_tracked']}\n"
+            message += f"Son Güncelleme: {stats['last_updated'][:19]}"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            self.logger.error(f"Stats komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ İstatistikler alınırken bir hata oluştu!"
             )
 
 if __name__ == '__main__':

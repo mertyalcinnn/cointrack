@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from .analysis.technical_analysis import TechnicalAnalysis, MarketDataProvider
 import asyncio
@@ -9,21 +9,176 @@ import random
 import logging
 import aiohttp
 import ccxt.async_support as ccxt
+import json
+import os
+import uuid
+import math
 
 
 class MarketAnalyzer:
-    def __init__(self, logger):
-        self.logger = logger
+    def __init__(self, config):
+        """Market Analyzer sınıfı başlatıcısı"""
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self._btc_closes = np.array([])
         
-        # Exchange nesnesini her istek için yeniden oluşturacağız
-        self.exchange = None
+        # Başarı oranı takibi için
+        self.signal_history = []
+        self.success_history = []
+        self.db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'signal_history.json')
         
-        self.min_volume = 500000  # Düşük hacim eşiği (500K USDT)
-        self.min_price = 0.00001
-        
-        # Geçerli sembolleri başlangıçta boş bırak
-        self.valid_symbols = set()
+        # Veritabanını yükle
+        self._load_signal_history()
     
+    def _load_signal_history(self):
+        """Sinyal geçmişini yükle"""
+        try:
+            if os.path.exists(self.db_path):
+                with open(self.db_path, 'r') as f:
+                    data = json.load(f)
+                    self.signal_history = data.get('signals', [])
+                    self.success_history = data.get('results', [])
+                    
+                    # Son 100 sinyali tut
+                    if len(self.signal_history) > 100:
+                        self.signal_history = self.signal_history[-100:]
+                        self.success_history = self.success_history[-100:]
+                        
+                    self.logger.info(f"Sinyal geçmişi yüklendi: {len(self.signal_history)} kayıt")
+            else:
+                self.logger.info("Sinyal geçmişi bulunamadı, yeni oluşturulacak")
+                # Veritabanı dizinini oluştur
+                os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+                self._save_signal_history()
+        except Exception as e:
+            self.logger.error(f"Sinyal geçmişi yükleme hatası: {e}")
+    
+    def _save_signal_history(self):
+        """Sinyal geçmişini kaydet"""
+        try:
+            with open(self.db_path, 'w') as f:
+                json.dump({
+                    'signals': self.signal_history,
+                    'results': self.success_history
+                }, f, indent=2)
+            self.logger.info(f"Sinyal geçmişi kaydedildi: {len(self.signal_history)} kayıt")
+        except Exception as e:
+            self.logger.error(f"Sinyal geçmişi kaydetme hatası: {e}")
+    
+    def add_signal(self, signal_data):
+        """Yeni sinyal ekle"""
+        try:
+            # Sinyal ID'si oluştur
+            signal_id = str(uuid.uuid4())
+            
+            # Sinyal verisi
+            signal = {
+                'id': signal_id,
+                'symbol': signal_data['symbol'],
+                'signal_type': signal_data['signal'],
+                'entry_price': signal_data['current_price'],
+                'stop_price': signal_data['stop_price'],
+                'target_price': signal_data['target_price'],
+                'score': signal_data['opportunity_score'],
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Sinyali kaydet
+            self.signal_history.append(signal)
+            
+            # Veritabanını güncelle
+            self._save_signal_history()
+            
+            return signal_id
+        except Exception as e:
+            self.logger.error(f"Sinyal ekleme hatası: {e}")
+            return None
+    
+    def update_signal_result(self, signal_id, result, actual_profit=None):
+        """Sinyal sonucunu güncelle"""
+        try:
+            # Sinyali bul
+            for signal in self.signal_history:
+                if signal['id'] == signal_id:
+                    # Sonucu kaydet
+                    result_data = {
+                        'signal_id': signal_id,
+                        'symbol': signal['symbol'],
+                        'signal_type': signal['signal_type'],
+                        'result': result,  # 'success', 'failure', 'timeout'
+                        'profit': actual_profit,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    
+                    self.success_history.append(result_data)
+                    
+                    # Veritabanını güncelle
+                    self._save_signal_history()
+                    
+                    return True
+            
+            return False
+        except Exception as e:
+            self.logger.error(f"Sinyal sonucu güncelleme hatası: {e}")
+            return False
+    
+    def get_success_rate(self, signal_type=None, time_period=None):
+        """Başarı oranını hesapla"""
+        try:
+            if not self.success_history:
+                return {
+                    'success_rate': 0,
+                    'total_signals': 0,
+                    'successful_signals': 0,
+                    'failed_signals': 0,
+                    'avg_profit': 0
+                }
+            
+            # Filtreleme
+            filtered_results = self.success_history
+            
+            # Sinyal tipine göre filtrele
+            if signal_type:
+                filtered_results = [r for r in filtered_results if signal_type in r['signal_type']]
+            
+            # Zaman periyoduna göre filtrele
+            if time_period:
+                now = datetime.now()
+                cutoff = now - timedelta(days=time_period)
+                filtered_results = [r for r in filtered_results if datetime.fromisoformat(r['timestamp']) > cutoff]
+            
+            # Başarı sayısı
+            successful = [r for r in filtered_results if r['result'] == 'success']
+            failed = [r for r in filtered_results if r['result'] == 'failure']
+            
+            # Toplam sinyal sayısı
+            total = len(filtered_results)
+            
+            # Başarı oranı
+            success_rate = (len(successful) / total) * 100 if total > 0 else 0
+            
+            # Ortalama kâr
+            profits = [r['profit'] for r in successful if r['profit'] is not None]
+            avg_profit = sum(profits) / len(profits) if profits else 0
+            
+            return {
+                'success_rate': round(success_rate, 2),
+                'total_signals': total,
+                'successful_signals': len(successful),
+                'failed_signals': len(failed),
+                'avg_profit': round(avg_profit, 2)
+            }
+        except Exception as e:
+            self.logger.error(f"Başarı oranı hesaplama hatası: {e}")
+            return {
+                'success_rate': 0,
+                'total_signals': 0,
+                'successful_signals': 0,
+                'failed_signals': 0,
+                'avg_profit': 0,
+                'error': str(e)
+            }
+
     async def _create_exchange(self):
         """Her analizde yeni bir exchange nesnesi oluştur"""
         try:
@@ -738,48 +893,76 @@ class MarketAnalyzer:
             else:
                 return current_price * 1.01, current_price * 0.99
 
-    def _find_support_resistance(self, lows: np.ndarray, highs: np.ndarray, closes: np.ndarray, window: int = 10, threshold: float = 0.01) -> Tuple[List[float], List[float]]:
+    def _find_support_resistance_levels(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict:
         """Destek ve direnç seviyelerini bul"""
         try:
-            # Son fiyat
-            last_price = closes[-1]
+            # Son 100 mumu kullan
+            window = min(100, len(closes))
+            recent_highs = highs[-window:]
+            recent_lows = lows[-window:]
+            recent_closes = closes[-window:]
             
-            # Yerel minimum ve maksimumları bul
-            min_idx = argrelextrema(lows, np.less, order=window)[0]
-            max_idx = argrelextrema(highs, np.greater, order=window)[0]
+            # Yerel tepe ve dip noktaları bul
+            peaks = []
+            troughs = []
             
-            # Destek seviyeleri (yerel minimumlar)
-            support_levels = [lows[i] for i in min_idx if lows[i] < last_price]
+            for i in range(2, len(recent_highs)-2):
+                # Yerel tepe
+                if recent_highs[i] > recent_highs[i-1] and recent_highs[i] > recent_highs[i-2] and \
+                   recent_highs[i] > recent_highs[i+1] and recent_highs[i] > recent_highs[i+2]:
+                    peaks.append(recent_highs[i])
+                
+                # Yerel dip
+                if recent_lows[i] < recent_lows[i-1] and recent_lows[i] < recent_lows[i-2] and \
+                   recent_lows[i] < recent_lows[i+1] and recent_lows[i] < recent_lows[i+2]:
+                    troughs.append(recent_lows[i])
             
-            # Direnç seviyeleri (yerel maksimumlar)
-            resistance_levels = [highs[i] for i in max_idx if highs[i] > last_price]
-            
-            # Pivot noktalarını hesapla
-            pivot_points = self._calculate_pivot_points(highs, lows, closes)
-            
-            # Pivot destek seviyelerini ekle
-            for key in ['S1', 'S2', 'S3']:
-                if key in pivot_points and pivot_points[key] < last_price:
-                    support_levels.append(pivot_points[key])
+            # Fiyat kümeleme ile destek/direnç seviyeleri bul
+            def cluster_prices(prices, threshold=0.01):
+                if not prices:
+                    return []
                     
-            # Pivot direnç seviyelerini ekle
-            for key in ['R1', 'R2', 'R3']:
-                if key in pivot_points and pivot_points[key] > last_price:
-                    resistance_levels.append(pivot_points[key])
-                    
-            # Seviyeleri konsolide et
-            support_levels = self._consolidate_levels(support_levels, threshold)
-            resistance_levels = self._consolidate_levels(resistance_levels, threshold)
+                # Fiyatları sırala
+                sorted_prices = sorted(prices)
+                
+                # Kümeleri oluştur
+                clusters = []
+                current_cluster = [sorted_prices[0]]
+                
+                for i in range(1, len(sorted_prices)):
+                    # Eğer fiyat önceki fiyata yakınsa, aynı kümeye ekle
+                    if sorted_prices[i] <= current_cluster[-1] * (1 + threshold):
+                        current_cluster.append(sorted_prices[i])
+                    else:
+                        # Yeni küme başlat
+                        clusters.append(current_cluster)
+                        current_cluster = [sorted_prices[i]]
+                
+                # Son kümeyi ekle
+                if current_cluster:
+                    clusters.append(current_cluster)
+                
+                # Her kümenin ortalamasını al
+                return [sum(cluster) / len(cluster) for cluster in clusters]
             
-            # Seviyeleri sırala
-            support_levels.sort(reverse=True)  # Yüksekten düşüğe
-            resistance_levels.sort()  # Düşükten yükseğe
+            # Destek ve direnç seviyelerini kümeleme ile bul
+            support_levels = cluster_prices(troughs)
+            resistance_levels = cluster_prices(peaks)
             
-            return support_levels, resistance_levels
+            # Son fiyata göre sırala (yakından uzağa)
+            current_price = recent_closes[-1]
+            
+            support_levels = sorted(support_levels, key=lambda x: abs(current_price - x))
+            resistance_levels = sorted(resistance_levels, key=lambda x: abs(current_price - x))
+            
+            return {
+                'support': support_levels[:3],  # En yakın 3 destek
+                'resistance': resistance_levels[:3]  # En yakın 3 direnç
+            }
             
         except Exception as e:
             self.logger.error(f"Destek/direnç bulma hatası: {e}")
-            return [], []
+            return {'support': [], 'resistance': []}
 
     def _consolidate_levels(self, levels: List[float], threshold: float = 0.01) -> List[float]:
         """Yakın seviyeleri birleştir"""
@@ -2525,11 +2708,26 @@ class MarketAnalyzer:
             ]
 
     async def scan15(self) -> List[Dict]:
-        """15 dakikalık zaman diliminde anlık al-kaç fırsatları için tarama yapar"""
+        """15 dakikalık zaman diliminde yüksek kaliteli al-çık fırsatları için tarama yapar"""
         exchange = None
         try:
             # Her taramada yeni bir exchange oluştur
             exchange = await self._create_exchange()
+            
+            # Piyasa durumunu analiz et
+            market_state = await self._analyze_market_state(exchange)
+            
+            # BTC verilerini al (piyasa durumu için)
+            btc_ohlcv = await exchange.fetch_ohlcv('BTC/USDT', '15m', limit=100)
+            if btc_ohlcv and len(btc_ohlcv) > 0:
+                self._btc_closes = np.array([float(candle[4]) for candle in btc_ohlcv])
+                
+                # BTC trend yönünü belirle
+                btc_ema9 = self._calculate_ema(self._btc_closes, 9)
+                btc_ema21 = self._calculate_ema(self._btc_closes, 21)
+                btc_trend = "YUKARI" if btc_ema9[-1] > btc_ema21[-1] else "AŞAĞI"
+                
+                self.logger.info(f"BTC trend: {btc_trend}, Piyasa durumu: {market_state['state']}")
             
             # Tüm sembolleri al
             tickers = await self._get_all_tickers(exchange)
@@ -2537,10 +2735,11 @@ class MarketAnalyzer:
                 self.logger.error("Ticker verileri alınamadı")
                 return []
             
-            # 15 dakikalık analiz yap
-            opportunities = await self._analyze_15min_opportunities(tickers, exchange)
+            # Yüksek kaliteli al-çık fırsatları bul
+            high_quality_opportunities = await self._find_high_quality_scalping_opportunities(tickers, exchange, btc_trend, market_state)
             
-            return opportunities
+            # Sonuçları döndür
+            return high_quality_opportunities
             
         except Exception as e:
             self.logger.error(f"15 dakikalık tarama hatası: {e}")
@@ -2553,24 +2752,124 @@ class MarketAnalyzer:
             except Exception as e:
                 self.logger.error(f"Exchange kapatma hatası: {e}")
     
-    async def _analyze_15min_opportunities(self, ticker_data: List[Dict], exchange) -> List[Dict]:
-        """15 dakikalık zaman diliminde anlık al-kaç fırsatları analizi"""
+    async def _analyze_market_state(self, exchange) -> Dict:
+        """Genel piyasa durumunu analiz et"""
+        try:
+            # BTC, ETH ve toplam piyasa durumunu analiz et
+            btc_ohlcv = await exchange.fetch_ohlcv('BTC/USDT', '15m', limit=100)
+            eth_ohlcv = await exchange.fetch_ohlcv('ETH/USDT', '15m', limit=100)
+            
+            if not btc_ohlcv or not eth_ohlcv:
+                return {"state": "NÖTR", "volatility": "NORMAL", "trend_strength": "ZAYIF"}
+            
+            # BTC ve ETH fiyatları
+            btc_closes = np.array([float(candle[4]) for candle in btc_ohlcv])
+            eth_closes = np.array([float(candle[4]) for candle in eth_ohlcv])
+            
+            # BTC volatilitesi (ATR/Fiyat)
+            btc_highs = np.array([float(candle[2]) for candle in btc_ohlcv])
+            btc_lows = np.array([float(candle[3]) for candle in btc_ohlcv])
+            btc_atr = self._calculate_atr(btc_highs, btc_lows, btc_closes, 14)
+            btc_volatility = btc_atr[-1] / btc_closes[-1] * 100  # Yüzde olarak
+            
+            # BTC trend gücü (ADX)
+            btc_adx = self._calculate_adx(btc_highs, btc_lows, btc_closes, 14)
+            
+            # BTC ve ETH korelasyonu
+            correlation = np.corrcoef(btc_closes[-20:], eth_closes[-20:])[0, 1]
+            
+            # BTC trend yönü
+            btc_ema9 = self._calculate_ema(btc_closes, 9)
+            btc_ema21 = self._calculate_ema(btc_closes, 21)
+            btc_ema55 = self._calculate_ema(btc_closes, 55)
+            
+            # Trend yönü
+            if btc_ema9[-1] > btc_ema21[-1] and btc_ema21[-1] > btc_ema55[-1]:
+                trend = "GÜÇLÜ YUKARI"
+            elif btc_ema9[-1] > btc_ema21[-1]:
+                trend = "YUKARI"
+            elif btc_ema9[-1] < btc_ema21[-1] and btc_ema21[-1] < btc_ema55[-1]:
+                trend = "GÜÇLÜ AŞAĞI"
+            elif btc_ema9[-1] < btc_ema21[-1]:
+                trend = "AŞAĞI"
+            else:
+                trend = "NÖTR"
+            
+            # Volatilite durumu
+            if btc_volatility > 3.0:
+                volatility = "YÜKSEK"
+            elif btc_volatility > 1.5:
+                volatility = "NORMAL"
+            else:
+                volatility = "DÜŞÜK"
+            
+            # Trend gücü
+            if btc_adx[-1] > 30:
+                trend_strength = "GÜÇLÜ"
+            elif btc_adx[-1] > 20:
+                trend_strength = "ORTA"
+            else:
+                trend_strength = "ZAYIF"
+            
+            # Piyasa durumu
+            if trend in ["GÜÇLÜ YUKARI", "YUKARI"] and trend_strength in ["GÜÇLÜ", "ORTA"]:
+                state = "BOĞA"
+            elif trend in ["GÜÇLÜ AŞAĞI", "AŞAĞI"] and trend_strength in ["GÜÇLÜ", "ORTA"]:
+                state = "AYI"
+            elif volatility == "YÜKSEK":
+                state = "DALGALI"
+            else:
+                state = "NÖTR"
+            
+            return {
+                "state": state,
+                "trend": trend,
+                "volatility": volatility,
+                "trend_strength": trend_strength,
+                "btc_adx": float(btc_adx[-1]),
+                "btc_volatility": float(btc_volatility),
+                "btc_eth_correlation": float(correlation)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Piyasa durumu analiz hatası: {e}")
+            return {"state": "NÖTR", "volatility": "NORMAL", "trend_strength": "ZAYIF"}
+    
+    async def _find_high_quality_scalping_opportunities(self, ticker_data: List[Dict], exchange, btc_trend: str, market_state: Dict) -> List[Dict]:
+        """Yüksek kaliteli al-çık fırsatları bul"""
         opportunities = []
-        scalping_opportunities = []
         
         try:
             # USDT çiftlerini filtrele
             filtered_tickers = [t for t in ticker_data if t['symbol'].endswith('USDT')]
             
-            self.logger.info(f"USDT çiftleri: {len(filtered_tickers)} coin")
-            
             # Minimum fiyat kontrolü
             filtered_tickers = [t for t in filtered_tickers if float(t['lastPrice']) >= 0.000001]
             
-            # Minimum hacim kontrolü - scalping için daha yüksek hacim gerekli
-            filtered_tickers = [t for t in filtered_tickers if float(t['quoteVolume']) >= 1000000]  # 1M USDT
+            # Minimum hacim kontrolü - daha düşük hacim eşiği kullan
+            filtered_tickers = [t for t in filtered_tickers if float(t['quoteVolume']) >= 500000]  # 500K USDT
             
-            self.logger.info(f"Fiyat ve hacim filtresi sonrası: {len(filtered_tickers)} coin")
+            # Fiyat değişimi kontrolünü kaldır (API'de bu alan olmayabilir)
+            # filtered_tickers = [t for t in filtered_tickers if abs(float(t.get('priceChangePercent', 0))) >= 1.0]
+            
+            self.logger.info(f"Filtreleme sonrası: {len(filtered_tickers)} coin")
+            
+            # Piyasa durumuna göre strateji belirle
+            market_condition = market_state["state"]
+            
+            # Piyasa durumuna göre analiz edilecek coin sayısını ve minimum puanı ayarla
+            if market_condition == "BOĞA":
+                max_coins = 50  # Boğa piyasasında daha fazla coin analiz et
+                min_score = 60  # Daha düşük puan eşiği
+            elif market_condition == "AYI":
+                max_coins = 30  # Ayı piyasasında daha az coin analiz et
+                min_score = 70  # Daha yüksek puan eşiği
+            elif market_condition == "DALGALI":
+                max_coins = 40
+                min_score = 65
+            else:  # NÖTR
+                max_coins = 40
+                min_score = 65
             
             # Hacme göre sırala
             filtered_tickers = sorted(
@@ -2579,216 +2878,361 @@ class MarketAnalyzer:
                 reverse=True
             )
             
-            # En yüksek hacimli 50 coini analiz et (scalping için daha az coin)
-            filtered_tickers = filtered_tickers[:50]
+            # En yüksek hacimli coinleri analiz et
+            filtered_tickers = filtered_tickers[:max_coins]
             
-            self.logger.info(f"Analiz edilecek: {len(filtered_tickers)} coin")
+            # Önce popüler coinleri kontrol et
+            popular_coins = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", 
+                            "ADAUSDT", "DOGEUSDT", "MATICUSDT", "AVAXUSDT", "LINKUSDT",
+                            "DOTUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT", "ETCUSDT",
+                            "APTUSDT", "NEARUSDT", "INJUSDT", "SUIUSDT", "OPUSDT"]
             
-            analyzed_count = 0
+            popular_opportunities = []
+            for symbol in popular_coins:
+                if any(t['symbol'] == symbol for t in filtered_tickers):
+                    ticker = next(t for t in filtered_tickers if t['symbol'] == symbol)
+                    opportunity = await self._analyze_for_quick_scalp(ticker, exchange, btc_trend, market_state, min_score)
+                    if opportunity:
+                        popular_opportunities.append(opportunity)
+            
+            # Diğer coinleri analiz et
+            other_opportunities = []
             for ticker in filtered_tickers:
-                symbol = ticker['symbol']
-                current_price = float(ticker['lastPrice'])
-                volume = float(ticker['quoteVolume'])
-                
-                # Sembol formatını kontrol et
-                if '/' not in symbol:
-                    exchange_symbol = f"{symbol[:-4]}/USDT" if symbol.endswith('USDT') else f"{symbol}/USDT"
-                else:
-                    exchange_symbol = symbol
-                
-                try:
-                    # 15 dakikalık OHLCV verilerini al
-                    ohlcv = await exchange.fetch_ohlcv(exchange_symbol, '15m', limit=100)
-                    
-                    if not ohlcv or len(ohlcv) < 20:
-                        continue
-                    
-                    analyzed_count += 1
-                    
-                    # Scalping analizi yap
-                    opportunity = await self._analyze_scalping_opportunity(symbol, current_price, volume, ohlcv)
-                    
-                    if opportunity and opportunity['opportunity_score'] >= 70:  # Scalping için daha yüksek puan
-                        scalping_opportunities.append(opportunity)
-                
-                except Exception as e:
-                    self.logger.error(f"Coin analizi hatası {symbol}: {e}")
-                    continue
-            
-            self.logger.info(f"Toplam {analyzed_count} coin analiz edildi")
-            self.logger.info(f"Bulunan scalping fırsatları: {len(scalping_opportunities)}")
-            
-            # Hiç fırsat bulunamazsa, popüler coinleri kontrol et
-            if len(scalping_opportunities) == 0:
-                self.logger.warning("Scalping fırsatı bulunamadı, popüler coinler kontrol ediliyor...")
-                return await self._check_popular_coins_for_scalping(exchange)
+                if ticker['symbol'] not in popular_coins:
+                    opportunity = await self._analyze_for_quick_scalp(ticker, exchange, btc_trend, market_state, min_score)
+                    if opportunity:
+                        other_opportunities.append(opportunity)
             
             # Fırsatları puanlara göre sırala
-            scalping_opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+            popular_opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+            other_opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
             
-            # En iyi 5 fırsatı göster
-            opportunities = scalping_opportunities[:5]
+            # En iyi 2 popüler coin ve en iyi 3 diğer coin
+            opportunities = popular_opportunities[:2] + other_opportunities[:3]
+            
+            # Fırsatları puanlara göre tekrar sırala
+            opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+            
+            # Eğer hiç fırsat bulunamazsa, kriterleri gevşet ve tekrar dene
+            if len(opportunities) == 0:
+                self.logger.info("İlk taramada fırsat bulunamadı, kriterler gevşetiliyor...")
+                
+                # Tüm coinleri tekrar analiz et, daha düşük puanları da kabul et
+                all_opportunities = []
+                for ticker in filtered_tickers:
+                    opportunity = await self._analyze_for_quick_scalp(ticker, exchange, btc_trend, market_state, min_score-10)
+                    if opportunity:
+                        all_opportunities.append(opportunity)
+                
+                # Fırsatları puanlara göre sırala
+                all_opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+                
+                # En iyi 3 fırsatı al
+                opportunities = all_opportunities[:3]
             
             return opportunities
             
         except Exception as e:
-            self.logger.error(f"15 dakikalık analiz hatası: {e}")
+            self.logger.error(f"Yüksek kaliteli al-çık fırsatları bulma hatası: {e}")
             return []
     
-    async def _analyze_scalping_opportunity(self, symbol: str, current_price: float, volume: float, ohlcv: list) -> Optional[Dict]:
-        """Scalping fırsatı analizi - 15 dakikalık zaman dilimi için"""
+    async def _analyze_for_quick_scalp(self, ticker: Dict, exchange, btc_trend: str, market_state: Dict, min_score: int = 70) -> Optional[Dict]:
+        """Hızlı al-çık analizi yap"""
         try:
+            symbol = ticker['symbol']
+            current_price = float(ticker['lastPrice'])
+            volume = float(ticker['quoteVolume'])
+            
+            # Fiyat değişimi hesapla (API'den gelmiyorsa kendimiz hesaplayalım)
+            price_change = 0
+            try:
+                # Eğer API'den geliyorsa kullan
+                if 'priceChangePercent' in ticker:
+                    price_change = float(ticker['priceChangePercent'])
+                else:
+                    # 24 saatlik veri al ve kendimiz hesaplayalım
+                    ohlcv_daily = await exchange.fetch_ohlcv(symbol, '1d', limit=2)
+                    if ohlcv_daily and len(ohlcv_daily) >= 2:
+                        yesterday_close = float(ohlcv_daily[0][4])
+                        price_change = (current_price - yesterday_close) / yesterday_close * 100
+            except:
+                price_change = 0
+            
+            self.logger.info(f"Hızlı al-çık analizi: {symbol}")
+            
+            # OHLCV verileri al
+            ohlcv = await exchange.fetch_ohlcv(symbol, '15m', limit=100)
+            
+            if not ohlcv or len(ohlcv) < 20:
+                return None
+            
             # Verileri numpy dizilerine dönüştür
             closes = np.array([float(candle[4]) for candle in ohlcv])
             highs = np.array([float(candle[2]) for candle in ohlcv])
             lows = np.array([float(candle[3]) for candle in ohlcv])
             opens = np.array([float(candle[1]) for candle in ohlcv])
             volumes = np.array([float(candle[5]) for candle in ohlcv])
-            timestamps = np.array([int(candle[0]) for candle in ohlcv])
             
-            # Son 3 mumun zaman farkını kontrol et - veri güncelliği için
-            current_time = int(datetime.now().timestamp() * 1000)
-            if current_time - timestamps[-1] > 900000:  # 15 dakikadan eski veri
-                return None
-            
-            # Scalping için özel indikatörler
+            # Temel indikatörler
             rsi = self._calculate_rsi(closes, 14)
-            stoch_rsi = self._calculate_stochastic_rsi(closes, 14, 3, 3)
             ema9 = self._calculate_ema(closes, 9)
             ema21 = self._calculate_ema(closes, 21)
             ema55 = self._calculate_ema(closes, 55)
+            macd, macd_signal, macd_hist = self._calculate_macd(closes)
             
-            # Bollinger Bands (daha dar bantlar - scalping için)
-            sma20 = np.array(pd.Series(closes).rolling(window=20).mean())
-            std20 = np.array(pd.Series(closes).rolling(window=20).std())
-            upper_band = sma20 + (std20 * 1.5)  # 2 yerine 1.5 kullanıyoruz
-            lower_band = sma20 - (std20 * 1.5)
+            # Bollinger Bands
+            upper_band, middle_band, lower_band = self._calculate_bollinger_bands(closes, 20, 2)
             
-            # VWAP hesapla (Volume Weighted Average Price)
-            vwap = self._calculate_vwap(highs, lows, closes, volumes)
+            # Supertrend
+            supertrend, supertrend_direction = self._calculate_supertrend(highs, lows, closes, 10, 3.0)
             
-            # Mum formasyonları
-            is_hammer = self._is_hammer(opens[-1], highs[-1], lows[-1], closes[-1])
-            is_engulfing = self._is_bullish_engulfing(opens[-2:], closes[-2:])
-            is_doji = self._is_doji(opens[-1], highs[-1], lows[-1], closes[-1])
-            
-            # Hacim analizi
-            volume_surge = volumes[-1] > volumes[-2] * 1.5  # Son hacim öncekinin 1.5 katı
-            
-            # Scalping puanlaması
-            score = 0
-            signal = "NÖTR"
-            entry_type = ""
-            
-            # 1. RSI ve Stochastic RSI (30 puan)
-            if rsi[-1] < 30 and stoch_rsi[-1] < 20:
-                score += 30  # Güçlü aşırı satım
-                entry_type = "RSI AŞIRI SATIM"
-            elif rsi[-1] > 70 and stoch_rsi[-1] > 80:
-                score += 30  # Güçlü aşırı alım (SHORT için)
-                entry_type = "RSI AŞIRI ALIM"
-            elif rsi[-1] < 40 and stoch_rsi[-1] < 30:
-                score += 20  # Orta aşırı satım
-                entry_type = "RSI SATIM"
-            elif rsi[-1] > 60 and stoch_rsi[-1] > 70:
-                score += 20  # Orta aşırı alım (SHORT için)
-                entry_type = "RSI ALIM"
-            
-            # 2. EMA Crossover (20 puan)
-            if ema9[-1] > ema21[-1] and ema9[-2] <= ema21[-2]:
-                score += 20  # Taze altın çapraz
-                entry_type = "EMA ÇAPRAZ (YUKARI)"
-            elif ema9[-1] < ema21[-1] and ema9[-2] >= ema21[-2]:
-                score += 20  # Taze ölüm çaprazı (SHORT için)
-                entry_type = "EMA ÇAPRAZ (AŞAĞI)"
-            
-            # 3. Bollinger Bands (20 puan)
-            if closes[-1] < lower_band[-1]:
-                score += 20  # Alt bant kırılımı
-                entry_type = "BB ALT BANT"
-            elif closes[-1] > upper_band[-1]:
-                score += 20  # Üst bant kırılımı (SHORT için)
-                entry_type = "BB ÜST BANT"
-            
-            # 4. Mum formasyonları (15 puan)
-            if is_hammer and rsi[-1] < 50:
-                score += 15  # Çekiç formasyonu
-                entry_type = "ÇEKİÇ FORMASYONU"
-            elif is_engulfing and rsi[-1] < 50:
-                score += 15  # Yutan formasyonu
-                entry_type = "YUTAN FORMASYON"
-            elif is_doji and closes[-1] < sma20[-1]:
-                score += 10  # Doji formasyonu
-                entry_type = "DOJI FORMASYON"
-            
-            # 5. VWAP (10 puan)
-            if closes[-1] < vwap[-1] * 0.995:  # VWAP'ın %0.5 altında
-                score += 10
-                entry_type += " + VWAP ALTI"
-            elif closes[-1] > vwap[-1] * 1.005:  # VWAP'ın %0.5 üstünde (SHORT için)
-                score += 10
-                entry_type += " + VWAP ÜSTÜ"
-            
-            # 6. Hacim (5 puan)
-            if volume_surge:
-                score += 5
-                entry_type += " + HACİM ARTIŞI"
-            
-            # Sinyal belirleme
-            if score >= 70 and rsi[-1] < 50:
-                signal = "⚡ SCALP LONG"
-            elif score >= 70 and rsi[-1] > 50:
-                signal = "⚡ SCALP SHORT"
-            else:
-                return None
-            
-            # Scalping için daha dar stop loss ve take profit
+            # ATR
             atr = self._calculate_atr(highs, lows, closes, 14)
             
+            # Stochastic RSI
+            stoch_rsi, stoch_k, stoch_d = self._calculate_stochastic_rsi(closes, 14, 3, 3)
+            
+            # Destek ve direnç seviyeleri
+            support_resistance = self._find_support_resistance_levels(highs, lows, closes)
+            
+            # LONG sinyali puanı
+            long_score = 0
+            long_reasons = []
+            
+            # SHORT sinyali puanı
+            short_score = 0
+            short_reasons = []
+            
+            # Piyasa durumuna göre bonus puanlar
+            market_condition = market_state["state"]
+            
+            if market_condition == "BOĞA":
+                long_score += 10
+                long_reasons.append("Boğa piyasası")
+            elif market_condition == "AYI":
+                short_score += 10
+                short_reasons.append("Ayı piyasası")
+            
+            # RSI
+            if rsi[-1] < 30:
+                long_score += 20
+                long_reasons.append("Aşırı satım (RSI<30)")
+            elif rsi[-1] < 40:
+                long_score += 10
+                long_reasons.append("Düşük RSI")
+            
+            if rsi[-1] > 70:
+                short_score += 20
+                short_reasons.append("Aşırı alım (RSI>70)")
+            elif rsi[-1] > 60:
+                short_score += 10
+                short_reasons.append("Yüksek RSI")
+            
+            # EMA çaprazlamaları
+            if ema9[-1] > ema21[-1] and ema9[-2] <= ema21[-2]:
+                long_score += 15
+                long_reasons.append("EMA çaprazlama (9>21)")
+            elif ema9[-1] > ema21[-1]:
+                long_score += 10
+                long_reasons.append("EMA yukarı trend")
+            
+            if ema9[-1] < ema21[-1] and ema9[-2] >= ema21[-2]:
+                short_score += 15
+                short_reasons.append("EMA çaprazlama (9<21)")
+            elif ema9[-1] < ema21[-1]:
+                short_score += 10
+                short_reasons.append("EMA aşağı trend")
+            
+            # MACD
+            if macd[-1] > macd_signal[-1] and macd[-2] <= macd_signal[-2]:
+                long_score += 15
+                long_reasons.append("MACD çaprazlama")
+            elif macd_hist[-1] > 0 and macd_hist[-1] > macd_hist[-2]:
+                long_score += 10
+                long_reasons.append("MACD yükseliyor")
+            
+            if macd[-1] < macd_signal[-1] and macd[-2] >= macd_signal[-2]:
+                short_score += 15
+                short_reasons.append("MACD çaprazlama")
+            elif macd_hist[-1] < 0 and macd_hist[-1] < macd_hist[-2]:
+                short_score += 10
+                short_reasons.append("MACD düşüyor")
+            
+            # Bollinger Bands
+            if closes[-1] < lower_band[-1]:
+                long_score += 15
+                long_reasons.append("BB alt bandı kırıldı")
+            
+            if closes[-1] > upper_band[-1]:
+                short_score += 15
+                short_reasons.append("BB üst bandı kırıldı")
+            
+            # Supertrend
+            if supertrend_direction[-1] == 1:
+                long_score += 15
+                long_reasons.append("Supertrend yukarı")
+            
+            if supertrend_direction[-1] == -1:
+                short_score += 15
+                short_reasons.append("Supertrend aşağı")
+            
+            # ADX
+            adx = self._calculate_adx(highs, lows, closes, 14)
+            if adx[-1] > 25:
+                # Trend güçlüyse, mevcut trende bonus puan ver
+                if supertrend_direction[-1] == 1:
+                    long_score += 10
+                    long_reasons.append("Güçlü trend (ADX>25)")
+                else:
+                    short_score += 10
+                    short_reasons.append("Güçlü trend (ADX>25)")
+            
+            # Stochastic RSI
+            if stoch_k[-1] < 20 and stoch_k[-1] > stoch_d[-1]:
+                long_score += 15
+                long_reasons.append("Stoch RSI dönüşü")
+            
+            if stoch_k[-1] > 80 and stoch_k[-1] < stoch_d[-1]:
+                short_score += 15
+                short_reasons.append("Stoch RSI dönüşü")
+            
+            # Destek seviyesine yakınlık
+            if support_resistance['support'] and abs(current_price - support_resistance['support'][0]) / current_price < 0.01:
+                long_score += 15
+                long_reasons.append("Destek seviyesinde")
+            
+            # Direnç seviyesine yakınlık
+            if support_resistance['resistance'] and abs(current_price - support_resistance['resistance'][0]) / current_price < 0.01:
+                short_score += 15
+                short_reasons.append("Direnç seviyesinde")
+            
+            # Hacim artışı
+            if volumes[-1] > np.mean(volumes[-5:]) * 1.5:
+                if closes[-1] > opens[-1]:  # Yeşil mum
+                    long_score += 10
+                    long_reasons.append("Hacim artışı")
+                else:  # Kırmızı mum
+                    short_score += 10
+                    short_reasons.append("Hacim artışı")
+            
+            # BTC trendi ile uyum
+            if btc_trend == "YUKARI" and long_score > 0:
+                long_score += 10
+                long_reasons.append("BTC trend uyumlu")
+            
+            if btc_trend == "AŞAĞI" and short_score > 0:
+                short_score += 10
+                short_reasons.append("BTC trend uyumlu")
+            
+            # LONG sinyali için minimum puan
+            long_signal = long_score >= min_score
+            
+            # SHORT sinyali için minimum puan
+            short_signal = short_score >= min_score
+            
+            # Sinyal belirleme
+            signal = None
+            score = 0
+            reasons = []
+            
+            if long_signal and short_signal:
+                # Her iki sinyal de güçlüyse, daha yüksek puanlı olanı seç
+                if long_score > short_score:
+                    signal = "⚡ HIZLI LONG"
+                    score = long_score
+                    reasons = long_reasons
+                else:
+                    signal = "⚡ HIZLI SHORT"
+                    score = short_score
+                    reasons = short_reasons
+            elif long_signal:
+                signal = "⚡ HIZLI LONG"
+                score = long_score
+                reasons = long_reasons
+            elif short_signal:
+                signal = "⚡ HIZLI SHORT"
+                score = short_score
+                reasons = short_reasons
+            else:
+                return None  # Sinyal yok
+            
+            # Stop loss ve take profit hesapla
             if "LONG" in signal:
                 # LONG sinyali için
                 entry_price = current_price
-                stop_price = current_price - (atr * 1.0)  # 1 ATR altı
-                target_price = current_price + (atr * 2.0)  # 2 ATR üstü (2:1 risk-ödül)
+                stop_price = max(current_price - (atr[-1] * 1.0), lows[-1] - (atr[-1] * 0.2))
+                target_price = current_price + (atr[-1] * 2.0)
+                
+                # Alternatif hedefler
+                target1 = current_price + (atr[-1] * 1.0)  # 1 ATR (kısa hedef)
+                target2 = current_price + (atr[-1] * 3.0)  # 3 ATR (uzun hedef)
             else:
                 # SHORT sinyali için
                 entry_price = current_price
-                stop_price = current_price + (atr * 1.0)  # 1 ATR üstü
-                target_price = current_price - (atr * 2.0)  # 2 ATR altı (2:1 risk-ödül)
+                stop_price = min(current_price + (atr[-1] * 1.0), highs[-1] + (atr[-1] * 0.2))
+                target_price = current_price - (atr[-1] * 2.0)
+                
+                # Alternatif hedefler
+                target1 = current_price - (atr[-1] * 1.0)  # 1 ATR (kısa hedef)
+                target2 = current_price - (atr[-1] * 3.0)  # 3 ATR (uzun hedef)
             
             # Risk/ödül oranı
             risk = abs(entry_price - stop_price)
             reward = abs(entry_price - target_price)
             risk_reward = reward / risk if risk > 0 else 1.0
             
-            # Risk/ödül oranı en az 1.5 olmalı
-            if risk_reward < 1.5:
+            # Risk/ödül oranı en az 1.2 olmalı (daha düşük eşik)
+            if risk_reward < 1.2:
                 return None
             
             # Tahmini işlem süresi (dakika)
             estimated_time = 15 * 3  # Ortalama 3 mum (45 dakika)
             
+            # Başarı olasılığı (%)
+            success_probability = min(95, score)  # Maksimum %95
+            
+            # Giriş stratejisi
+            entry_strategy = " + ".join(reasons[:3])  # En önemli 3 neden
+            
+            # Çıkış stratejisi
+            if "LONG" in signal:
+                exit_strategy = f"Hedef: {target_price:.6f} veya RSI>70 veya MACD çaprazlama"
+            else:
+                exit_strategy = f"Hedef: {target_price:.6f} veya RSI<30 veya MACD çaprazlama"
+            
+            # Destek ve direnç seviyeleri
+            support_levels = support_resistance['support'][:2] if support_resistance['support'] else []
+            resistance_levels = support_resistance['resistance'][:2] if support_resistance['resistance'] else []
+            
+            # Piyasa durumu bilgisi
+            market_info = f"{market_state['state']} piyasa, {market_state['trend_strength']} trend"
+            
             return {
                 'symbol': symbol,
                 'current_price': current_price,
-                'volume': volume,
-                'rsi': float(rsi[-1]),
-                'stoch_rsi': float(stoch_rsi[-1]),
-                'ema9': float(ema9[-1]),
-                'ema21': float(ema21[-1]),
                 'signal': signal,
-                'entry_type': entry_type,
                 'opportunity_score': score,
+                'success_probability': f"%{success_probability}",
                 'entry_price': entry_price,
                 'stop_price': stop_price,
                 'target_price': target_price,
+                'target1': target1,  # Kısa hedef
+                'target2': target2,  # Uzun hedef
                 'risk_reward': risk_reward,
                 'estimated_time': f"{estimated_time} dakika",
+                'entry_strategy': entry_strategy,
+                'exit_strategy': exit_strategy,
+                'rsi': float(rsi[-1]),
+                'volume': volume,
+                'price_change_24h': f"%{price_change:.2f}",
+                'support_levels': support_levels,
+                'resistance_levels': resistance_levels,
+                'market_state': market_info,
                 'timestamp': datetime.now().isoformat()
             }
             
         except Exception as e:
-            self.logger.error(f"Scalping analizi hatası ({symbol}): {e}")
+            self.logger.error(f"Hızlı al-çık analizi hatası ({symbol}): {e}")
             return None
 
     def _calculate_stochastic_rsi(self, prices: np.ndarray, period: int = 14, k_period: int = 3, d_period: int = 3) -> np.ndarray:
@@ -2935,3 +3379,967 @@ class MarketAnalyzer:
         
         # En iyi 3 fırsatı göster
         return opportunities[:3]
+    
+    def _calculate_fibonacci_levels(self, highs: np.ndarray, lows: np.ndarray) -> dict:
+        """Fibonacci seviyeleri hesapla"""
+        # Son 20 mumun en yüksek ve en düşük değerleri
+        recent_high = np.max(highs[-20:])
+        recent_low = np.min(lows[-20:])
+        
+        # Fibonacci seviyeleri
+        range_size = recent_high - recent_low
+        
+        return {
+            'level_0': recent_low,  # 0.0
+            'level_236': recent_low + range_size * 0.236,  # 23.6%
+            'level_382': recent_low + range_size * 0.382,  # 38.2%
+            'level_500': recent_low + range_size * 0.5,    # 50.0%
+            'level_618': recent_low + range_size * 0.618,  # 61.8%
+            'level_786': recent_low + range_size * 0.786,  # 78.6%
+            'level_1000': recent_high  # 100.0%
+        }
+    
+    def _calculate_volume_trend(self, volumes: np.ndarray) -> str:
+        """Hacim trendini hesapla"""
+        if len(volumes) < 10:
+            return "NÖTR"
+            
+        # Son 10 mumun hacim eğilimi
+        volume_sma5 = np.array(pd.Series(volumes[-10:]).rolling(window=5).mean())
+        
+        if np.isnan(volume_sma5[-1]) or np.isnan(volume_sma5[-2]):
+            return "NÖTR"
+            
+        if volume_sma5[-1] > volume_sma5[-2] * 1.05:
+            return "YUKARI"
+        elif volume_sma5[-1] < volume_sma5[-2] * 0.95:
+            return "AŞAĞI"
+        else:
+            return "NÖTR"
+    
+    def _calculate_obv(self, closes: np.ndarray, volumes: np.ndarray) -> np.ndarray:
+        """On Balance Volume (OBV) hesapla"""
+        obv = np.zeros_like(closes)
+        
+        # İlk değer
+        obv[0] = volumes[0]
+        
+        # OBV hesapla
+        for i in range(1, len(closes)):
+            if closes[i] > closes[i-1]:
+                obv[i] = obv[i-1] + volumes[i]
+            elif closes[i] < closes[i-1]:
+                obv[i] = obv[i-1] - volumes[i]
+            else:
+                obv[i] = obv[i-1]
+        
+        return obv
+    
+    def _calculate_buying_selling_pressure(self, opens: np.ndarray, closes: np.ndarray, highs: np.ndarray, lows: np.ndarray, volumes: np.ndarray) -> tuple:
+        """Alım-Satım Baskısı hesapla"""
+        buying_pressure = 0
+        selling_pressure = 0
+        
+        # Son 5 mumu analiz et
+        for i in range(max(0, len(closes)-5), len(closes)):
+            if i >= len(opens) or i >= len(closes) or i >= len(highs) or i >= len(lows) or i >= len(volumes):
+                continue
+                
+            # Mum yönü
+            is_bullish = closes[i] > opens[i]
+            
+            # Gövde ve gölge boyutları
+            body_size = abs(closes[i] - opens[i])
+            if is_bullish:
+                upper_shadow = highs[i] - closes[i]
+                lower_shadow = opens[i] - lows[i]
+            else:
+                upper_shadow = highs[i] - opens[i]
+                lower_shadow = closes[i] - lows[i]
+            
+            # Toplam boyut
+            total_size = body_size + upper_shadow + lower_shadow
+            
+            if total_size == 0:
+                continue
+                
+            # Hacim ağırlıklı baskı
+            if is_bullish:
+                # Alım baskısı: gövde + alt gölge
+                buying_pressure += volumes[i] * (body_size + lower_shadow) / total_size
+                # Satım baskısı: üst gölge
+                selling_pressure += volumes[i] * upper_shadow / total_size
+            else:
+                # Alım baskısı: alt gölge
+                buying_pressure += volumes[i] * lower_shadow / total_size
+                # Satım baskısı: gövde + üst gölge
+                selling_pressure += volumes[i] * (body_size + upper_shadow) / total_size
+        
+        return buying_pressure, selling_pressure
+    
+    def _calculate_adx(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> tuple:
+        """Average Directional Index (ADX) hesapla"""
+        if len(highs) < period + 1:
+            return np.array([20]), np.array([20]), np.array([20])  # Varsayılan değerler
+            
+        # True Range hesapla
+        tr = np.zeros(len(highs))
+        tr[0] = highs[0] - lows[0]
+        
+        for i in range(1, len(highs)):
+            tr[i] = max(
+                highs[i] - lows[i],  # Günlük range
+                abs(highs[i] - closes[i-1]),  # Dünkü kapanışa göre yüksek
+                abs(lows[i] - closes[i-1])  # Dünkü kapanışa göre düşük
+            )
+        
+        # Directional Movement hesapla
+        plus_dm = np.zeros(len(highs))
+        minus_dm = np.zeros(len(highs))
+        
+        for i in range(1, len(highs)):
+            up_move = highs[i] - highs[i-1]
+            down_move = lows[i-1] - lows[i]
+            
+            if up_move > down_move and up_move > 0:
+                plus_dm[i] = up_move
+            else:
+                plus_dm[i] = 0
+                
+            if down_move > up_move and down_move > 0:
+                minus_dm[i] = down_move
+            else:
+                minus_dm[i] = 0
+        
+        # Smoothed TR, +DM, -DM
+        atr = np.zeros(len(tr))
+        plus_di = np.zeros(len(plus_dm))
+        minus_di = np.zeros(len(minus_dm))
+        
+        # İlk değerler
+        atr[period-1] = np.sum(tr[:period])
+        plus_di[period-1] = np.sum(plus_dm[:period])
+        minus_di[period-1] = np.sum(minus_dm[:period])
+        
+        # Smoothing
+        for i in range(period, len(tr)):
+            atr[i] = atr[i-1] - (atr[i-1] / period) + tr[i]
+            plus_di[i] = plus_di[i-1] - (plus_di[i-1] / period) + plus_dm[i]
+            minus_di[i] = minus_di[i-1] - (minus_di[i-1] / period) + minus_dm[i]
+        
+        # +DI ve -DI hesapla
+        plus_di_values = np.zeros(len(plus_di))
+        minus_di_values = np.zeros(len(minus_di))
+        
+        for i in range(period-1, len(atr)):
+            if atr[i] > 0:
+                plus_di_values[i] = 100 * plus_di[i] / atr[i]
+                minus_di_values[i] = 100 * minus_di[i] / atr[i]
+            else:
+                plus_di_values[i] = 0
+                minus_di_values[i] = 0
+        
+        # DX hesapla
+        dx = np.zeros(len(plus_di_values))
+        
+        for i in range(period-1, len(dx)):
+            if plus_di_values[i] + minus_di_values[i] > 0:
+                dx[i] = 100 * abs(plus_di_values[i] - minus_di_values[i]) / (plus_di_values[i] + minus_di_values[i])
+            else:
+                dx[i] = 0
+        
+        # ADX hesapla (DX'in period-period SMA'sı)
+        adx = np.zeros(len(dx))
+        
+        # İlk ADX değeri
+        if period*2-2 < len(dx):
+            adx[period*2-2] = np.mean(dx[period-1:period*2-1])
+        
+        # Smoothing
+        for i in range(period*2-1, len(dx)):
+            adx[i] = (adx[i-1] * (period-1) + dx[i]) / period
+        
+        return adx, plus_di_values, minus_di_values
+    
+    def _analyze_market_structure(self, highs: np.ndarray, lows: np.ndarray) -> str:
+        """Piyasa yapısını analiz et (Higher Highs, Lower Lows)"""
+        if len(highs) < 10 or len(lows) < 10:
+            return "BELİRSİZ"
+            
+        # Son 10 mumun yüksek ve düşük değerlerini analiz et
+        # Yerel tepe ve dip noktaları bul
+        peaks = []
+        troughs = []
+        
+        for i in range(2, len(highs)-2):
+            # Yerel tepe
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                peaks.append((i, highs[i]))
+            
+            # Yerel dip
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                troughs.append((i, lows[i]))
+        
+        # En az 2 tepe ve 2 dip gerekli
+        if len(peaks) < 2 or len(troughs) < 2:
+            return "BELİRSİZ"
+            
+        # Son iki tepe ve dibi karşılaştır
+        peaks.sort(key=lambda x: x[0])  # Zamana göre sırala
+        troughs.sort(key=lambda x: x[0])
+        
+        last_two_peaks = peaks[-2:]
+        last_two_troughs = troughs[-2:]
+        
+        # Higher Highs, Higher Lows (Yükselen trend)
+        if len(last_two_peaks) >= 2 and len(last_two_troughs) >= 2:
+            if last_two_peaks[1][1] > last_two_peaks[0][1] and last_two_troughs[1][1] > last_two_troughs[0][1]:
+                return "YÜKSELEN TREND"
+            
+            # Lower Highs, Lower Lows (Düşen trend)
+            elif last_two_peaks[1][1] < last_two_peaks[0][1] and last_two_troughs[1][1] < last_two_troughs[0][1]:
+                return "DÜŞEN TREND"
+            
+            # Higher Highs, Lower Lows (Genişleyen aralık)
+            elif last_two_peaks[1][1] > last_two_peaks[0][1] and last_two_troughs[1][1] < last_two_troughs[0][1]:
+                return "GENİŞLEYEN ARALIK"
+            
+            # Lower Highs, Higher Lows (Daralan aralık)
+            elif last_two_peaks[1][1] < last_two_peaks[0][1] and last_two_troughs[1][1] > last_two_troughs[0][1]:
+                return "DARALAN ARALIK"
+        
+        return "BELİRSİZ"
+    
+    def _calculate_correlation_with_btc(self, closes: np.ndarray) -> float:
+        """BTC ile korelasyon hesapla"""
+        # Eğer BTC verileri yoksa, varsayılan değer döndür
+        if not hasattr(self, '_btc_closes') or len(self._btc_closes) < 20:
+            return 0.0
+            
+        # Son 20 mumu kullan
+        coin_returns = np.diff(closes[-21:]) / closes[-21:-1]
+        btc_returns = np.diff(self._btc_closes[-21:]) / self._btc_closes[-21:-1]
+        
+        # Uzunlukları eşitle
+        min_length = min(len(coin_returns), len(btc_returns))
+        if min_length < 5:
+            return 0.0
+            
+        coin_returns = coin_returns[-min_length:]
+        btc_returns = btc_returns[-min_length:]
+        
+        # Korelasyon hesapla
+        try:
+            correlation = np.corrcoef(coin_returns, btc_returns)[0, 1]
+            return correlation if not np.isnan(correlation) else 0.0
+        except:
+            return 0.0
+
+    async def _validate_signal_with_ml(self, symbol: str, signal_type: str, ohlcv: list) -> float:
+        """Makine öğrenimi ile sinyal doğrulama"""
+        try:
+            # Basit özellikler çıkar
+            features = self._extract_ml_features(ohlcv)
+            
+            # Başarı geçmişine göre benzer durumları bul
+            similar_signals = self._find_similar_signals(features, signal_type)
+            
+            # Benzer sinyallerin başarı oranını hesapla
+            if similar_signals:
+                success_count = sum(1 for s in similar_signals if s['result'] == 'success')
+                confidence = success_count / len(similar_signals)
+                
+                self.logger.info(f"ML doğrulama: {symbol} için {len(similar_signals)} benzer sinyal bulundu, güven: %{round(confidence*100, 2)}")
+                
+                return confidence
+            else:
+                # Benzer sinyal bulunamazsa, genel başarı oranını kullan
+                general_stats = self.get_success_rate(signal_type)
+                return general_stats['success_rate'] / 100
+                
+        except Exception as e:
+            self.logger.error(f"ML doğrulama hatası ({symbol}): {e}")
+            return 0.5  # Varsayılan değer
+    
+    def _extract_ml_features(self, ohlcv: list) -> dict:
+        """Makine öğrenimi için özellikler çıkar"""
+        try:
+            # Verileri numpy dizilerine dönüştür
+            closes = np.array([float(candle[4]) for candle in ohlcv])
+            highs = np.array([float(candle[2]) for candle in ohlcv])
+            lows = np.array([float(candle[3]) for candle in ohlcv])
+            volumes = np.array([float(candle[5]) for candle in ohlcv])
+            
+            # Temel özellikler
+            rsi = self._calculate_rsi(closes, 14)
+            ema9 = self._calculate_ema(closes, 9)
+            ema21 = self._calculate_ema(closes, 21)
+            
+            # Son 5 mumun özellikleri
+            last_candles = min(5, len(closes))
+            recent_closes = closes[-last_candles:]
+            recent_volumes = volumes[-last_candles:]
+            
+            # Fiyat değişimi
+            price_change = (closes[-1] / closes[-5] - 1) * 100 if len(closes) >= 5 else 0
+            
+            # Hacim değişimi
+            volume_change = (volumes[-1] / volumes[-5] - 1) * 100 if len(volumes) >= 5 else 0
+            
+            # Volatilite (ATR)
+            atr = self._calculate_atr(highs, lows, closes, 14)
+            volatility = atr[-1] / closes[-1] * 100 if len(atr) > 0 else 0
+            
+            # Özellikler
+            features = {
+                'rsi': float(rsi[-1]) if len(rsi) > 0 else 50,
+                'ema9_dist': float((closes[-1] / ema9[-1] - 1) * 100) if len(ema9) > 0 else 0,
+                'ema21_dist': float((closes[-1] / ema21[-1] - 1) * 100) if len(ema21) > 0 else 0,
+                'price_change': float(price_change),
+                'volume_change': float(volume_change),
+                'volatility': float(volatility),
+                'close_position': float((closes[-1] - lows[-1]) / (highs[-1] - lows[-1]) * 100) if highs[-1] != lows[-1] else 50
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"Özellik çıkarma hatası: {e}")
+            return {}
+    
+    def _find_similar_signals(self, features: dict, signal_type: str, max_signals: int = 10) -> list:
+        """Benzer sinyalleri bul"""
+        try:
+            if not features or not self.success_history:
+                return []
+                
+            # Sadece aynı sinyal tipindeki sonuçları filtrele
+            filtered_history = [r for r in self.success_history if signal_type in r['signal_type']]
+            
+            if not filtered_history:
+                return []
+                
+            # Her sonuç için benzerlik skoru hesapla
+            scored_history = []
+            
+            for result in filtered_history:
+                # Sinyal ID'sini bul
+                signal_id = result['signal_id']
+                
+                # Sinyali bul
+                signal = next((s for s in self.signal_history if s['id'] == signal_id), None)
+                
+                if not signal or 'features' not in signal:
+                    continue
+                    
+                # Özellikler arasındaki benzerliği hesapla
+                similarity = self._calculate_similarity(features, signal['features'])
+                
+                scored_history.append({
+                    'result': result['result'],
+                    'similarity': similarity
+                })
+            
+            # Benzerliğe göre sırala
+            scored_history.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # En benzer max_signals kadar sonucu döndür
+            return scored_history[:max_signals]
+            
+        except Exception as e:
+            self.logger.error(f"Benzer sinyal bulma hatası: {e}")
+            return []
+    
+    def _calculate_similarity(self, features1: dict, features2: dict) -> float:
+        """İki özellik seti arasındaki benzerliği hesapla"""
+        try:
+            # Ortak özellikleri bul
+            common_features = set(features1.keys()) & set(features2.keys())
+            
+            if not common_features:
+                return 0.0
+                
+            # Öklid mesafesi hesapla
+            squared_diff_sum = 0
+            
+            for feature in common_features:
+                # Özellik değerlerini normalize et
+                value1 = features1[feature]
+                value2 = features2[feature]
+                
+                # Kare farkını topla
+                squared_diff_sum += (value1 - value2) ** 2
+            
+            # Mesafeyi benzerliğe dönüştür (1 / (1 + mesafe))
+            distance = math.sqrt(squared_diff_sum)
+            similarity = 1 / (1 + distance)
+            
+            return similarity
+            
+        except Exception as e:
+            self.logger.error(f"Benzerlik hesaplama hatası: {e}")
+            return 0.0
+
+    async def get_performance_stats(self) -> Dict:
+        """Performans istatistiklerini al"""
+        try:
+            # Genel başarı oranı
+            overall_stats = self.get_success_rate()
+            
+            # Son 7 gün
+            weekly_stats = self.get_success_rate(time_period=7)
+            
+            # Son 30 gün
+            monthly_stats = self.get_success_rate(time_period=30)
+            
+            # Sinyal tiplerine göre
+            long_stats = self.get_success_rate(signal_type="LONG")
+            short_stats = self.get_success_rate(signal_type="SHORT")
+            scalp_stats = self.get_success_rate(signal_type="SCALP")
+            
+            # Zaman dilimlerine göre
+            stats_15m = self.get_success_rate(signal_type="15m")
+            stats_1h = self.get_success_rate(signal_type="1h")
+            stats_4h = self.get_success_rate(signal_type="4h")
+            
+            return {
+                'overall': overall_stats,
+                'weekly': weekly_stats,
+                'monthly': monthly_stats,
+                'by_type': {
+                    'long': long_stats,
+                    'short': short_stats,
+                    'scalp': scalp_stats
+                },
+                'by_timeframe': {
+                    '15m': stats_15m,
+                    '1h': stats_1h,
+                    '4h': stats_4h
+                },
+                'total_signals_tracked': len(self.signal_history),
+                'last_updated': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Performans istatistikleri alma hatası: {e}")
+            return {
+                'error': str(e),
+                'overall': {'success_rate': 0}
+            }
+
+    def _calculate_supertrend(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 10, multiplier: float = 3.0) -> tuple:
+        """Supertrend hesapla"""
+        try:
+            # ATR hesapla
+            atr = self._calculate_atr(highs, lows, closes, period)
+            
+            # Supertrend hesapla
+            hl2 = (highs + lows) / 2
+            
+            # Üst ve alt bantlar
+            upper_band = hl2 + (multiplier * atr)
+            lower_band = hl2 - (multiplier * atr)
+            
+            # Supertrend değerleri
+            supertrend = np.zeros_like(closes)
+            direction = np.zeros_like(closes)  # 1: yukarı trend, -1: aşağı trend
+            
+            # İlk değer
+            supertrend[0] = closes[0]
+            direction[0] = 1  # Başlangıçta yukarı trend kabul edelim
+            
+            # Supertrend hesapla
+            for i in range(1, len(closes)):
+                # Önceki değerler
+                prev_upper = upper_band[i-1]
+                prev_lower = lower_band[i-1]
+                prev_supertrend = supertrend[i-1]
+                prev_direction = direction[i-1]
+                
+                # Mevcut değerler
+                curr_upper = upper_band[i]
+                curr_lower = lower_band[i]
+                curr_close = closes[i]
+                
+                # Yön değişimi kontrolü
+                if prev_supertrend <= prev_upper and curr_close > curr_upper:
+                    curr_direction = -1  # Aşağı trend
+                elif prev_supertrend >= prev_lower and curr_close < curr_lower:
+                    curr_direction = 1  # Yukarı trend
+                else:
+                    curr_direction = prev_direction  # Değişim yok
+                
+                # Supertrend değeri
+                if curr_direction == 1:
+                    curr_supertrend = curr_lower
+                else:
+                    curr_supertrend = curr_upper
+                
+                # Değerleri kaydet
+                supertrend[i] = curr_supertrend
+                direction[i] = curr_direction
+            
+            return supertrend, direction
+            
+        except Exception as e:
+            self.logger.error(f"Supertrend hesaplama hatası: {e}")
+            # Boş diziler döndür
+            empty_array = np.zeros_like(closes)
+            return empty_array, empty_array
+    
+    def _calculate_ichimoku(self, highs: np.ndarray, lows: np.ndarray) -> tuple:
+        """Ichimoku Cloud hesapla"""
+        try:
+            # Tenkan-sen (Conversion Line): (9-period high + 9-period low)/2
+            period9_high = np.array(pd.Series(highs).rolling(window=9).max())
+            period9_low = np.array(pd.Series(lows).rolling(window=9).min())
+            tenkan_sen = (period9_high + period9_low) / 2
+            
+            # Kijun-sen (Base Line): (26-period high + 26-period low)/2
+            period26_high = np.array(pd.Series(highs).rolling(window=26).max())
+            period26_low = np.array(pd.Series(lows).rolling(window=26).min())
+            kijun_sen = (period26_high + period26_low) / 2
+            
+            # Senkou Span A (Leading Span A): (Conversion Line + Base Line)/2
+            senkou_span_a = (tenkan_sen + kijun_sen) / 2
+            
+            # Senkou Span B (Leading Span B): (52-period high + 52-period low)/2
+            period52_high = np.array(pd.Series(highs).rolling(window=52).max())
+            period52_low = np.array(pd.Series(lows).rolling(window=52).min())
+            senkou_span_b = (period52_high + period52_low) / 2
+            
+            return tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b
+            
+        except Exception as e:
+            self.logger.error(f"Ichimoku hesaplama hatası: {e}")
+            # Boş diziler döndür
+            empty_array = np.zeros_like(highs)
+            return empty_array, empty_array, empty_array, empty_array
+    
+    def _calculate_adx(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
+        """Average Directional Index (ADX) hesapla"""
+        try:
+            # True Range hesapla
+            tr1 = np.abs(highs[1:] - lows[1:])
+            tr2 = np.abs(highs[1:] - closes[:-1])
+            tr3 = np.abs(lows[1:] - closes[:-1])
+            tr = np.maximum(np.maximum(tr1, tr2), tr3)
+            tr = np.insert(tr, 0, tr[0])  # İlk değeri ekle
+            
+            # Average True Range (ATR) hesapla
+            atr = np.zeros_like(closes)
+            atr[0] = tr[0]
+            for i in range(1, len(tr)):
+                atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+            
+            # +DM ve -DM hesapla
+            plus_dm = np.zeros_like(closes)
+            minus_dm = np.zeros_like(closes)
+            
+            for i in range(1, len(closes)):
+                # +DM: Bugünkü yüksek - Dünkü yüksek
+                up_move = highs[i] - highs[i-1]
+                # -DM: Dünkü düşük - Bugünkü düşük
+                down_move = lows[i-1] - lows[i]
+                
+                if up_move > down_move and up_move > 0:
+                    plus_dm[i] = up_move
+                else:
+                    plus_dm[i] = 0
+                    
+                if down_move > up_move and down_move > 0:
+                    minus_dm[i] = down_move
+                else:
+                    minus_dm[i] = 0
+            
+            # +DI ve -DI hesapla
+            plus_di = 100 * (plus_dm / atr)
+            minus_di = 100 * (minus_dm / atr)
+            
+            # DX hesapla: |+DI - -DI| / |+DI + -DI| * 100
+            dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)  # Sıfıra bölmeyi önle
+            
+            # ADX hesapla (DX'in period-periyotlu ortalaması)
+            adx = np.zeros_like(closes)
+            adx[period-1] = np.mean(dx[:period])
+            
+            for i in range(period, len(closes)):
+                adx[i] = (adx[i-1] * (period - 1) + dx[i]) / period
+            
+            return adx
+            
+        except Exception as e:
+            self.logger.error(f"ADX hesaplama hatası: {e}")
+            return np.zeros_like(closes)
+    
+    def _calculate_volume_profile(self, closes: np.ndarray, volumes: np.ndarray, num_bins: int = 10) -> dict:
+        """Hacim Profili hesapla"""
+        try:
+            # Fiyat aralığını belirle
+            min_price = np.min(closes)
+            max_price = np.max(closes)
+            
+            # Fiyat aralıklarını oluştur
+            price_range = max_price - min_price
+            bin_size = price_range / num_bins
+            
+            # Boş hacim profili oluştur
+            volume_profile = {
+                'price_levels': [],
+                'volumes': []
+            }
+            
+            # Her fiyat seviyesi için hacim topla
+            for i in range(num_bins):
+                lower_bound = min_price + i * bin_size
+                upper_bound = lower_bound + bin_size
+                
+                # Bu fiyat aralığındaki mumları bul
+                in_range = (closes >= lower_bound) & (closes < upper_bound)
+                volume_in_range = np.sum(volumes[in_range])
+                
+                # Orta fiyat noktası
+                mid_price = (lower_bound + upper_bound) / 2
+                
+                volume_profile['price_levels'].append(mid_price)
+                volume_profile['volumes'].append(volume_in_range)
+            
+            return volume_profile
+            
+        except Exception as e:
+            self.logger.error(f"Hacim profili hesaplama hatası: {e}")
+            return {'price_levels': [], 'volumes': []}
+    
+    def _calculate_macd(self, closes: np.ndarray, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> tuple:
+        """MACD (Moving Average Convergence Divergence) hesapla"""
+        try:
+            # Hızlı EMA
+            ema_fast = self._calculate_ema(closes, fast_period)
+            
+            # Yavaş EMA
+            ema_slow = self._calculate_ema(closes, slow_period)
+            
+            # MACD Line = Hızlı EMA - Yavaş EMA
+            macd_line = ema_fast - ema_slow
+            
+            # Signal Line = MACD Line'ın EMA'sı
+            signal_line = np.array(pd.Series(macd_line).ewm(span=signal_period, adjust=False).mean())
+            
+            # Histogram = MACD Line - Signal Line
+            histogram = macd_line - signal_line
+            
+            return macd_line, signal_line, histogram
+            
+        except Exception as e:
+            self.logger.error(f"MACD hesaplama hatası: {e}")
+            # Boş diziler döndür
+            empty_array = np.zeros_like(closes)
+            return empty_array, empty_array, empty_array
+    
+    def _calculate_rsi(self, closes: np.ndarray, period: int = 14) -> np.ndarray:
+        """RSI (Relative Strength Index) hesapla"""
+        try:
+            # Fiyat değişimleri
+            deltas = np.diff(closes)
+            
+            # Pozitif ve negatif değişimler
+            seed = deltas[:period+1]
+            up = seed[seed >= 0].sum() / period
+            down = -seed[seed < 0].sum() / period
+            
+            if down == 0:
+                rs = float('inf')
+            else:
+                rs = up / down
+            
+            rsi = np.zeros_like(closes)
+            rsi[period] = 100. - 100. / (1. + rs)
+            
+            # RSI hesapla
+            for i in range(period + 1, len(closes)):
+                delta = deltas[i - 1]
+                
+                if delta > 0:
+                    upval = delta
+                    downval = 0.
+                else:
+                    upval = 0.
+                    downval = -delta
+                
+                up = (up * (period - 1) + upval) / period
+                down = (down * (period - 1) + downval) / period
+                
+                if down == 0:
+                    rs = float('inf')
+                else:
+                    rs = up / down
+                
+                rsi[i] = 100. - 100. / (1. + rs)
+            
+            return rsi
+            
+        except Exception as e:
+            self.logger.error(f"RSI hesaplama hatası: {e}")
+            return np.zeros_like(closes)
+    
+    def _calculate_ema(self, closes: np.ndarray, period: int) -> np.ndarray:
+        """EMA (Exponential Moving Average) hesapla"""
+        try:
+            return np.array(pd.Series(closes).ewm(span=period, adjust=False).mean())
+        except Exception as e:
+            self.logger.error(f"EMA hesaplama hatası: {e}")
+            return np.zeros_like(closes)
+    
+    def _calculate_atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> np.ndarray:
+        """ATR (Average True Range) hesapla"""
+        try:
+            # True Range hesapla
+            tr1 = np.abs(highs[1:] - lows[1:])
+            tr2 = np.abs(highs[1:] - closes[:-1])
+            tr3 = np.abs(lows[1:] - closes[:-1])
+            tr = np.maximum(np.maximum(tr1, tr2), tr3)
+            tr = np.insert(tr, 0, tr[0])  # İlk değeri ekle
+            
+            # ATR hesapla
+            atr = np.zeros_like(closes)
+            atr[0] = tr[0]
+            
+            for i in range(1, len(tr)):
+                atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+            
+            return atr
+            
+        except Exception as e:
+            self.logger.error(f"ATR hesaplama hatası: {e}")
+            return np.zeros_like(closes)
+    
+    def _calculate_stochastic_rsi(self, closes: np.ndarray, period: int = 14, k_period: int = 3, d_period: int = 3) -> tuple:
+        """Stochastic RSI hesapla"""
+        try:
+            # RSI hesapla
+            rsi = self._calculate_rsi(closes, period)
+            
+            # Stochastic RSI hesapla
+            stoch_rsi = np.zeros_like(closes)
+            
+            for i in range(period, len(closes)):
+                rsi_window = rsi[i-period+1:i+1]
+                
+                if np.max(rsi_window) == np.min(rsi_window):
+                    stoch_rsi[i] = 50  # Eğer max=min ise, 50 değerini kullan
+                else:
+                    stoch_rsi[i] = 100 * (rsi[i] - np.min(rsi_window)) / (np.max(rsi_window) - np.min(rsi_window))
+            
+            # %K ve %D hesapla
+            k = np.array(pd.Series(stoch_rsi).rolling(window=k_period).mean())
+            d = np.array(pd.Series(k).rolling(window=d_period).mean())
+            
+            return stoch_rsi, k, d
+            
+        except Exception as e:
+            self.logger.error(f"Stochastic RSI hesaplama hatası: {e}")
+            empty_array = np.zeros_like(closes)
+            return empty_array, empty_array, empty_array
+    
+    def _calculate_bollinger_bands(self, closes: np.ndarray, period: int = 20, std_dev: float = 2.0) -> tuple:
+        """Bollinger Bands hesapla"""
+        try:
+            # Orta bant (SMA)
+            middle_band = np.array(pd.Series(closes).rolling(window=period).mean())
+            
+            # Standart sapma
+            std = np.array(pd.Series(closes).rolling(window=period).std())
+            
+            # Üst ve alt bantlar
+            upper_band = middle_band + (std * std_dev)
+            lower_band = middle_band - (std * std_dev)
+            
+            return upper_band, middle_band, lower_band
+            
+        except Exception as e:
+            self.logger.error(f"Bollinger Bands hesaplama hatası: {e}")
+            # Boş diziler döndür
+            empty_array = np.zeros_like(closes)
+            return empty_array, empty_array, empty_array
+    
+    def _calculate_volume_oscillator(self, volumes: np.ndarray, fast_period: int = 5, slow_period: int = 10) -> np.ndarray:
+        """Hacim Osilatörü hesapla"""
+        try:
+            # Hızlı ve yavaş hareketli ortalamalar
+            fast_ma = np.array(pd.Series(volumes).rolling(window=fast_period).mean())
+            slow_ma = np.array(pd.Series(volumes).rolling(window=slow_period).mean())
+            
+            # Hacim osilatörü
+            volume_oscillator = ((fast_ma - slow_ma) / slow_ma) * 100
+            
+            return volume_oscillator
+            
+        except Exception as e:
+            self.logger.error(f"Hacim Osilatörü hesaplama hatası: {e}")
+            return np.zeros_like(volumes)
+    
+    def _calculate_parabolic_sar(self, highs: np.ndarray, lows: np.ndarray, acceleration: float = 0.02, maximum: float = 0.2) -> np.ndarray:
+        """Parabolic SAR hesapla"""
+        try:
+            # Başlangıç değerleri
+            sar = np.zeros_like(highs)
+            trend = np.zeros_like(highs)  # 1: yukarı trend, -1: aşağı trend
+            extreme_point = np.zeros_like(highs)
+            acceleration_factor = np.zeros_like(highs)
+            
+            # İlk değerler
+            trend[0] = 1  # Başlangıçta yukarı trend kabul edelim
+            sar[0] = lows[0]  # Başlangıç SAR değeri
+            extreme_point[0] = highs[0]  # Başlangıç EP değeri
+            acceleration_factor[0] = acceleration  # Başlangıç AF değeri
+            
+            # Parabolic SAR hesapla
+            for i in range(1, len(highs)):
+                # Önceki değerler
+                prev_sar = sar[i-1]
+                prev_trend = trend[i-1]
+                prev_ep = extreme_point[i-1]
+                prev_af = acceleration_factor[i-1]
+                
+                # Mevcut değerler
+                curr_high = highs[i]
+                curr_low = lows[i]
+                
+                # SAR hesapla
+                if prev_trend == 1:  # Yukarı trend
+                    # SAR = Önceki SAR + Önceki AF * (Önceki EP - Önceki SAR)
+                    curr_sar = prev_sar + prev_af * (prev_ep - prev_sar)
+                    
+                    # SAR değeri düzeltme
+                    curr_sar = min(curr_sar, lows[i-1], lows[i-2] if i > 1 else lows[i-1])
+                    
+                    # Trend değişimi kontrolü
+                    if curr_sar > curr_low:
+                        curr_trend = -1  # Aşağı trend
+                        curr_sar = prev_ep  # SAR değeri EP olur
+                        curr_ep = curr_low  # EP değeri mevcut düşük olur
+                        curr_af = acceleration  # AF değeri başlangıç değerine döner
+                    else:
+                        curr_trend = 1  # Yukarı trend devam eder
+                        
+                        # EP ve AF güncelleme
+                        if curr_high > prev_ep:
+                            curr_ep = curr_high  # EP güncelle
+                            curr_af = min(prev_af + acceleration, maximum)  # AF güncelle
+                        else:
+                            curr_ep = prev_ep  # EP değişmez
+                            curr_af = prev_af  # AF değişmez
+                else:  # Aşağı trend
+                    # SAR = Önceki SAR - Önceki AF * (Önceki SAR - Önceki EP)
+                    curr_sar = prev_sar - prev_af * (prev_sar - prev_ep)
+                    
+                    # SAR değeri düzeltme
+                    curr_sar = max(curr_sar, highs[i-1], highs[i-2] if i > 1 else highs[i-1])
+                    
+                    # Trend değişimi kontrolü
+                    if curr_sar < curr_high:
+                        curr_trend = 1  # Yukarı trend
+                        curr_sar = prev_ep  # SAR değeri EP olur
+                        curr_ep = curr_high  # EP değeri mevcut yüksek olur
+                        curr_af = acceleration  # AF değeri başlangıç değerine döner
+                    else:
+                        curr_trend = -1  # Aşağı trend devam eder
+                        
+                        # EP ve AF güncelleme
+                        if curr_low < prev_ep:
+                            curr_ep = curr_low  # EP güncelle
+                            curr_af = min(prev_af + acceleration, maximum)  # AF güncelle
+                        else:
+                            curr_ep = prev_ep  # EP değişmez
+                            curr_af = prev_af  # AF değişmez
+                
+                # Değerleri kaydet
+                sar[i] = curr_sar
+                trend[i] = curr_trend
+                extreme_point[i] = curr_ep
+                acceleration_factor[i] = curr_af
+            
+            return sar
+            
+        except Exception as e:
+            self.logger.error(f"Parabolic SAR hesaplama hatası: {e}")
+            return np.zeros_like(highs)
+    
+    def _calculate_keltner_channel(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 20, atr_multiplier: float = 2.0) -> tuple:
+        """Keltner Channel hesapla"""
+        try:
+            # Orta bant (EMA)
+            middle_band = self._calculate_ema(closes, period)
+            
+            # ATR
+            atr = self._calculate_atr(highs, lows, closes, period)
+            
+            # Üst ve alt bantlar
+            upper_band = middle_band + (atr * atr_multiplier)
+            lower_band = middle_band - (atr * atr_multiplier)
+            
+            return upper_band, middle_band, lower_band
+            
+        except Exception as e:
+            self.logger.error(f"Keltner Channel hesaplama hatası: {e}")
+            # Boş diziler döndür
+            empty_array = np.zeros_like(closes)
+            return empty_array, empty_array, empty_array
+    
+    def _calculate_pivot_points(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict:
+        """Pivot Noktaları hesapla (Klasik yöntem)"""
+        try:
+            # Son günün değerleri
+            last_high = highs[-1]
+            last_low = lows[-1]
+            last_close = closes[-1]
+            
+            # Pivot noktası
+            pivot = (last_high + last_low + last_close) / 3
+            
+            # Destek seviyeleri
+            s1 = (2 * pivot) - last_high
+            s2 = pivot - (last_high - last_low)
+            s3 = s1 - (last_high - last_low)
+            
+            # Direnç seviyeleri
+            r1 = (2 * pivot) - last_low
+            r2 = pivot + (last_high - last_low)
+            r3 = r1 + (last_high - last_low)
+            
+            return {
+                'pivot': pivot,
+                'support': [s1, s2, s3],
+                'resistance': [r1, r2, r3]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Pivot Noktaları hesaplama hatası: {e}")
+            return {'pivot': 0, 'support': [0, 0, 0], 'resistance': [0, 0, 0]}
+    
+    def _calculate_fibonacci_levels(self, high: float, low: float, is_uptrend: bool = True) -> dict:
+        """Fibonacci Seviyeleri hesapla"""
+        try:
+            # Fibonacci oranları
+            ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
+            
+            # Fiyat aralığı
+            price_range = high - low
+            
+            # Fibonacci seviyeleri
+            levels = {}
+            
+            if is_uptrend:
+                # Yukarı trend için (düşükten yükseğe)
+                for ratio in ratios:
+                    levels[ratio] = low + (price_range * ratio)
+            else:
+                # Aşağı trend için (yüksekten düşüğe)
+                for ratio in ratios:
+                    levels[ratio] = high - (price_range * ratio)
+            
+            return levels
+            
+        except Exception as e:
+            self.logger.error(f"Fibonacci Seviyeleri hesaplama hatası: {e}")
+            return {ratio: 0 for ratio in [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]}
