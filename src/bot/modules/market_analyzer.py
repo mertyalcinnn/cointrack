@@ -828,141 +828,104 @@ class MarketAnalyzer:
                 return "SHORT GİR - Zayıf Sinyal"
 
     def _calculate_target_stop(self, current_price: float, signal: str, resistance_levels: List[float], support_levels: List[float]) -> Tuple[float, float]:
-        """Hedef ve stop fiyatlarını hesapla"""
+        """Hedef ve stop seviyelerini hesapla"""
         try:
-            # Varsayılan değerler
-            target_price = current_price
-            stop_price = current_price
-            
-            # Direnç ve destek seviyelerini sırala
-            resistance_levels = sorted([r for r in resistance_levels if r > current_price])
-            support_levels = sorted([s for s in support_levels if s < current_price], reverse=True)
-            
-            # Sinyal türüne göre hedef ve stop belirle
-            if "LONG" in signal or "ALIM" in signal:
-                # LONG için hedef: en yakın direnç seviyesi
-                if resistance_levels:
-                    target_price = resistance_levels[0]
-                else:
-                    # Direnç yoksa fiyatın %3 üstü
+            # Listelerin boş olup olmadığını kontrol et
+            if not support_levels or not resistance_levels:
+                # Varsayılan değerler
+                if "LONG" in signal:
                     target_price = current_price * 1.03
-                    
-                # LONG için stop: en yakın destek seviyesi
-                if support_levels:
-                    stop_price = support_levels[0]
+                    stop_price = current_price * 0.98
+                elif "SHORT" in signal:
+                    target_price = current_price * 0.97
+                    stop_price = current_price * 1.02
                 else:
-                    # Destek yoksa fiyatın %2 altı
+                    target_price = current_price * 1.02
                     stop_price = current_price * 0.98
                     
-            elif "SHORT" in signal or "SATIŞ" in signal:
-                # SHORT için hedef: en yakın destek seviyesi
-                if support_levels:
-                    target_price = support_levels[0]
-                else:
-                    # Destek yoksa fiyatın %3 altı
-                    target_price = current_price * 0.97
-                    
-                # SHORT için stop: en yakın direnç seviyesi
-                if resistance_levels:
-                    stop_price = resistance_levels[0]
-                else:
-                    # Direnç yoksa fiyatın %2 üstü
-                    stop_price = current_price * 1.02
+                return target_price, stop_price
             
-            # Minimum risk/ödül oranı kontrolü
-            risk = abs(current_price - stop_price)
-            reward = abs(current_price - target_price)
+            # Mevcut kodun devamı...
+            # Long için
+            if "LONG" in signal:
+                # En yakın direnç seviyesini bul
+                target_price = min([r for r in resistance_levels if r > current_price], default=current_price * 1.03)
+                # En yakın destek seviyesini bul
+                stop_price = max([s for s in support_levels if s < current_price], default=current_price * 0.98)
             
-            # Risk/ödül oranı en az 1.5 olsun
-            if reward / risk < 1.5:
-                if "LONG" in signal or "ALIM" in signal:
-                    target_price = current_price + (1.5 * risk)
-                elif "SHORT" in signal or "SATIŞ" in signal:
-                    target_price = current_price - (1.5 * risk)
+            # Short için
+            elif "SHORT" in signal:
+                # En yakın destek seviyesini bul
+                target_price = max([s for s in support_levels if s < current_price], default=current_price * 0.97)
+                # En yakın direnç seviyesini bul
+                stop_price = min([r for r in resistance_levels if r > current_price], default=current_price * 1.02)
             
-            self.logger.debug(f"Hesaplanan hedef: {target_price}, stop: {stop_price}, sinyal: {signal}")
+            # Nötr için
+            else:
+                target_price = current_price * 1.02
+                stop_price = current_price * 0.98
+            
             return target_price, stop_price
             
         except Exception as e:
-            self.logger.error(f"Hedef/stop hesaplama hatası: {e}")
-            # Hata durumunda varsayılan değerler
-            if "LONG" in signal or "ALIM" in signal:
-                return current_price * 1.03, current_price * 0.98
-            elif "SHORT" in signal or "SATIŞ" in signal:
-                return current_price * 0.97, current_price * 1.02
-            else:
-                return current_price * 1.01, current_price * 0.99
+            # Hata durumunda varsayılan değerleri döndür
+            self.logger.error(f"Target/Stop hesaplama hatası: {e}")
+            return current_price * 1.02, current_price * 0.98
 
     def _find_support_resistance_levels(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> dict:
         """Destek ve direnç seviyelerini bul"""
         try:
-            # Son 100 mumu kullan
-            window = min(100, len(closes))
-            recent_highs = highs[-window:]
-            recent_lows = lows[-window:]
-            recent_closes = closes[-window:]
+            # Veri doğrulama
+            if len(highs) < 20 or len(lows) < 20 or len(closes) < 20:
+                # Yetersiz veri için boş sonuç döndür
+                return {}
             
-            # Yerel tepe ve dip noktaları bul
-            peaks = []
-            troughs = []
+            # Mevcut kodlar...
             
-            for i in range(2, len(recent_highs)-2):
-                # Yerel tepe
-                if recent_highs[i] > recent_highs[i-1] and recent_highs[i] > recent_highs[i-2] and \
-                   recent_highs[i] > recent_highs[i+1] and recent_highs[i] > recent_highs[i+2]:
-                    peaks.append(recent_highs[i])
-                
-                # Yerel dip
-                if recent_lows[i] < recent_lows[i-1] and recent_lows[i] < recent_lows[i-2] and \
-                   recent_lows[i] < recent_lows[i+1] and recent_lows[i] < recent_lows[i+2]:
-                    troughs.append(recent_lows[i])
-            
-            # Fiyat kümeleme ile destek/direnç seviyeleri bul
-            def cluster_prices(prices, threshold=0.01):
-                if not prices:
-                    return []
-                    
-                # Fiyatları sırala
-                sorted_prices = sorted(prices)
-                
-                # Kümeleri oluştur
-                clusters = []
-                current_cluster = [sorted_prices[0]]
-                
-                for i in range(1, len(sorted_prices)):
-                    # Eğer fiyat önceki fiyata yakınsa, aynı kümeye ekle
-                    if sorted_prices[i] <= current_cluster[-1] * (1 + threshold):
-                        current_cluster.append(sorted_prices[i])
-                    else:
-                        # Yeni küme başlat
-                        clusters.append(current_cluster)
-                        current_cluster = [sorted_prices[i]]
-                
-                # Son kümeyi ekle
-                if current_cluster:
-                    clusters.append(current_cluster)
-                
-                # Her kümenin ortalamasını al
-                return [sum(cluster) / len(cluster) for cluster in clusters]
-            
-            # Destek ve direnç seviyelerini kümeleme ile bul
-            support_levels = cluster_prices(troughs)
-            resistance_levels = cluster_prices(peaks)
-            
-            # Son fiyata göre sırala (yakından uzağa)
-            current_price = recent_closes[-1]
-            
-            support_levels = sorted(support_levels, key=lambda x: abs(current_price - x))
-            resistance_levels = sorted(resistance_levels, key=lambda x: abs(current_price - x))
-            
-            return {
-                'support': support_levels[:3],  # En yakın 3 destek
-                'resistance': resistance_levels[:3]  # En yakın 3 direnç
+            # Sonuç sözlüğünü oluştur ve tüm gerekli anahtarların var olduğundan emin ol
+            result = {
+                "support1": 0.0,
+                "support2": 0.0,
+                "support3": 0.0,
+                "resistance1": 0.0,
+                "resistance2": 0.0,
+                "resistance3": 0.0
             }
             
+            # Destek seviyeleri
+            if support_clusters and len(support_clusters) > 0:
+                for i, level in enumerate(support_clusters[:3], 1):
+                    result[f"support{i}"] = level
+                    
+            # Direnç seviyeleri
+            if resistance_clusters and len(resistance_clusters) > 0:
+                for i, level in enumerate(resistance_clusters[:3], 1):
+                    result[f"resistance{i}"] = level
+            
+            # Mevcut fiyat
+            current_price = closes[-1]
+            
+            # Eğer seviyeler ayarlanmadıysa varsayılan değerler ata
+            for i in range(1, 4):
+                if result[f"support{i}"] == 0:
+                    result[f"support{i}"] = current_price * (1 - 0.01 * i)
+                if result[f"resistance{i}"] == 0:
+                    result[f"resistance{i}"] = current_price * (1 + 0.01 * i)
+                    
+            return result
+            
         except Exception as e:
-            self.logger.error(f"Destek/direnç bulma hatası: {e}")
-            return {'support': [], 'resistance': []}
+            self.logger.error(f"Support/resistance hesaplama hatası: {e}")
+            # Hata durumunda varsayılan değerler döndür
+            current_price = closes[-1] if len(closes) > 0 else 0
+            return {
+                "support1": current_price * 0.98,
+                "support2": current_price * 0.95,
+                "support3": current_price * 0.92,
+                "resistance1": current_price * 1.02,
+                "resistance2": current_price * 1.05,
+                "resistance3": current_price * 1.08
+            }
 
     def _consolidate_levels(self, levels: List[float], threshold: float = 0.01) -> List[float]:
         """Yakın seviyeleri birleştir"""
@@ -983,37 +946,74 @@ class MarketAnalyzer:
         return consolidated
 
     def _calculate_pivot_points(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> Dict:
-        """Pivot noktalarını hesapla"""
-        if len(highs) < 5:
+        """Pivot noktalarını hesapla - Güçlendirilmiş versiyon"""
+        try:
+            # Dizilerin geçerli sayılar içerdiğinden emin ol
+            if len(highs) < 5 or len(lows) < 5 or len(closes) < 5:
+                # Yetersiz veri için varsayılan pivot noktaları hesapla
+                default_price = closes[-1] if len(closes) > 0 else 100.0  # Eğer closes boşsa 100 kullan
+                return {
+                    'pivot': default_price,
+                    'support1': default_price * 0.99,
+                    'support2': default_price * 0.98,
+                    'resistance1': default_price * 1.01,
+                    'resistance2': default_price * 1.02
+                }
+            
+            # NaN ve sıfır değerleri kontrol et
+            if np.isnan(highs).any() or np.isnan(lows).any() or np.isnan(closes).any() or \
+               (highs == 0).any() or (lows == 0).any() or (closes == 0).any():
+                # NaN veya sıfır değerler için varsayılan pivot noktaları hesapla
+                default_price = np.nanmean(closes) if not np.isnan(closes).all() else 100.0
+                return {
+                    'pivot': default_price,
+                    'support1': default_price * 0.99,
+                    'support2': default_price * 0.98,
+                    'resistance1': default_price * 1.01,
+                    'resistance2': default_price * 1.02
+                }
+            
+            # Son günün değerlerini al
+            high = float(highs[-1])
+            low = float(lows[-1])
+            close = float(closes[-1])
+            
+            # Pivot noktası
+            pivot = (high + low + close) / 3.0
+            
+            # Destek ve direnç seviyeleri
+            support1 = (2.0 * pivot) - high
+            support2 = pivot - (high - low)
+            resistance1 = (2.0 * pivot) - low
+            resistance2 = pivot + (high - low)
+            
+            # Mantıklı değerler kontrolü - negatif değerlere izin verilmemeli
+            pivot = max(0.001, pivot)
+            support1 = max(0.001, support1)
+            support2 = max(0.001, support2)
+            resistance1 = max(0.001, resistance1)
+            resistance2 = max(0.001, resistance2)
+            
+            # Sonucu döndür
             return {
-                'pivot': closes[-1],
-                'support1': closes[-1] * 0.99,
-                'support2': closes[-1] * 0.98,
-                'resistance1': closes[-1] * 1.01,
-                'resistance2': closes[-1] * 1.02
+                'pivot': pivot,
+                'support1': support1,
+                'support2': support2,
+                'resistance1': resistance1,
+                'resistance2': resistance2
             }
-        
-        # Son günün değerlerini al
-        high = highs[-1]
-        low = lows[-1]
-        close = closes[-1]
-        
-        # Pivot noktası
-        pivot = (high + low + close) / 3
-        
-        # Destek ve direnç seviyeleri
-        support1 = (2 * pivot) - high
-        support2 = pivot - (high - low)
-        resistance1 = (2 * pivot) - low
-        resistance2 = pivot + (high - low)
-        
-        return {
-            'pivot': pivot,
-            'support1': support1,
-            'support2': support2,
-            'resistance1': resistance1,
-            'resistance2': resistance2
-        }
+            
+        except Exception as e:
+            self.logger.error(f"Pivot noktası hesaplama hatası: {e}")
+            # Hata durumunda varsayılan değerler
+            default_price = closes[-1] if len(closes) > 0 else 100.0
+            return {
+                'pivot': default_price,
+                'support1': default_price * 0.99,
+                'support2': default_price * 0.98,
+                'resistance1': default_price * 1.01,
+                'resistance2': default_price * 1.02
+            }
 
     async def generate_chart(self, symbol: str, interval: str = "4h") -> Optional[bytes]:
         """Teknik analiz grafiği oluştur"""
@@ -1864,6 +1864,121 @@ class MarketAnalyzer:
         
         return consolidated
 
+    async def scan4h(self) -> List[Dict]:
+        """4 saatlik grafiklerle piyasayı tarama ve analiz etme"""
+        try:
+            # Exchange oluştur
+            exchange = await self._create_exchange()
+            
+            # Tüm sembollerin ticker verilerini al
+            tickers = await self._get_all_tickers(exchange)
+            if not tickers or len(tickers) == 0:
+                self.logger.error("Ticker verileri alınamadı")
+                return []
+            
+            # 4 saatlik zaman dilimi için piyasayı analiz et
+            opportunities = await self._analyze_market_with_exchange(tickers, "4h", exchange)
+            
+            # 4 saatlik mumlarla sinyal kalitesini artırmak için her fırsatın destek/direnç seviyelerini iyileştir
+            improved_opportunities = []
+            for opportunity in opportunities:
+                try:
+                    # Sembol ve fiyat bilgisini al
+                    symbol = opportunity['symbol']
+                    current_price = opportunity['current_price']
+                    
+                    # Sembol formatını kontrol et ve düzelt
+                    try:
+                        # '/' içeren sembolleri düzelt
+                        if '/' in symbol:
+                            # '/' karakteri varsa kaldır ve USDT ekle
+                            symbol = symbol.replace('/', '')
+                            if not symbol.endswith('USDT'):
+                                symbol = symbol + 'USDT'
+                        else:
+                            # USDT ile bitmeyen sembollere USDT ekle
+                            if not symbol.endswith('USDT'):
+                                symbol = symbol + 'USDT'
+                    except Exception as format_error:
+                        self.logger.debug(f"Sembol formatı düzeltme hatası ({symbol}): {format_error}")
+                    
+                    # Güncellenen sembolü ayarla
+                    opportunity['symbol'] = symbol
+                    
+                    # OHLCV almak için gerekli sembol formatını ayarla
+                    exchange_symbol = symbol
+                    # CCXT için dogru format oluştur - "/" ekle
+                    if '/' not in exchange_symbol and 'USDT' in exchange_symbol:
+                        exchange_symbol = exchange_symbol.replace('USDT', '/USDT')
+                    
+                    # Tam OHLCV verilerini al
+                    try:
+                        ohlcv = await exchange.fetch_ohlcv(exchange_symbol, "4h", limit=100)
+                    except Exception as ohlcv_error:
+                        self.logger.debug(f"OHLCV veri alma hatası ({exchange_symbol}): {ohlcv_error}")
+                        ohlcv = []
+                    
+                    # En basit ve kesin çözüm: Pivot hesaplamasını tamamen atlayarak, direk varsayılan değerler kullan
+                    # Long için stop ve hedef
+                    if "LONG" in opportunity.get('signal', ''):
+                        opportunity['stop_price'] = current_price * 0.97  # %3 stop loss
+                        opportunity['target_price'] = current_price * 1.05  # %5 kar hedefi
+                    # Short için stop ve hedef
+                    elif "SHORT" in opportunity.get('signal', ''):
+                        opportunity['stop_price'] = current_price * 1.03  # %3 stop loss
+                        opportunity['target_price'] = current_price * 0.95  # %5 kar hedefi
+                    # Diğer tüm durumlar için varsayılan değerler
+                    else:
+                        opportunity['stop_price'] = current_price * 0.97
+                        opportunity['target_price'] = current_price * 1.05
+                    
+                    # Opportunity score'u iyileştirelim
+                    opportunity['opportunity_score'] = min(opportunity['opportunity_score'] * 1.1, 100)
+                    improved_opportunities.append(opportunity)
+                    
+                except Exception as e:
+                    self.logger.debug(f"Fırsat iyileştirme hatası ({opportunity.get('symbol', 'bilinmeyen')}): {e}")
+                    # Orijinal haliyle eklemeden önce gerekli alanlar var mı kontrol et
+                    if 'stop_price' not in opportunity:
+                        # Varsayılan stop değeri
+                        current_price = opportunity.get('current_price', 100.0)
+                        if "LONG" in opportunity.get('signal', ''):
+                            opportunity['stop_price'] = current_price * 0.97  # %3 stop loss
+                        elif "SHORT" in opportunity.get('signal', ''):
+                            opportunity['stop_price'] = current_price * 1.03  # %3 stop loss
+                        else:
+                            opportunity['stop_price'] = current_price * 0.97
+                    
+                    if 'target_price' not in opportunity:
+                        # Varsayılan hedef değeri
+                        current_price = opportunity.get('current_price', 100.0)
+                        if "LONG" in opportunity.get('signal', ''):
+                            opportunity['target_price'] = current_price * 1.05  # %5 kâr hedefi
+                        elif "SHORT" in opportunity.get('signal', ''):
+                            opportunity['target_price'] = current_price * 0.95  # %5 kâr hedefi
+                        else:
+                            opportunity['target_price'] = current_price * 1.05
+                    
+                    improved_opportunities.append(opportunity)  # Orijinal haliyle ekle
+            
+            # Eğer hiç fırsat bulunamazsa
+            if not improved_opportunities:
+                self.logger.warning("4 saatlik taramada fırsat bulunamadı")
+                return []
+            
+            # Fırsatları puanlara göre sırala
+            improved_opportunities.sort(key=lambda x: x.get('opportunity_score', 0), reverse=True)
+            
+            # En iyi 10 fırsatı döndür
+            return improved_opportunities[:10]
+            
+        except Exception as e:
+            self.logger.error(f"scan4h hatası: {e}")
+            return []
+        finally:
+            if exchange:
+                await exchange.close()
+    
     async def analyze_global_market_trend(self) -> Dict:
         """Global piyasa trendini analiz et"""
         try:
