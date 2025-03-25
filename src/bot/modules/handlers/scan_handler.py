@@ -360,21 +360,56 @@ class ScanHandler:
         for message in messages:
             await update.message.reply_text(message)
 
-    async def scan_market(self, interval="4h"):
-        """Belirtilen aralıkta piyasayı tarar ve fırsatları döndürür"""
+    async def scan_market(self, interval="4h", worker_count=None):
+        """Belirtilen aralıkta piyasayı çoklu işlemci ile tarar ve fırsatları döndürür"""
         try:
+            # Başlangıç zamanını kaydet (performans ölçümü için)
+            import time
+            start_time = time.time()
+            
+            self.logger.info("\n\n==== 📊 ÇOKLU İŞLEMCİ TARAMA BAŞLATILIYOR ====")
+            
             # Market verilerini al
             ticker_data = await self.client.get_ticker()
             if not ticker_data:
                 self.logger.warning("Market verileri alınamadı!")
                 return []
+            
+            # DEBUG: Alınan coin sayısını göster    
+            self.logger.info(f"🔍 Toplam {len(ticker_data)} coin verisi alındı")
                 
-            # Fırsatları güvenli şekilde analiz et
-            opportunities = await self._analyze_market_safely(ticker_data, interval)
+            # Çalışan CPU sayısını belirle (belirtilmemişse)
+            if worker_count is None:
+                # Kullanılabilir işlemci sayısının 1 eksiğini kullan (sistemin responsif kalması için)
+                import multiprocessing
+                worker_count = max(1, multiprocessing.cpu_count() - 1)
+                self.logger.info(f"🔄 Tarama {worker_count} işlemci ile yapılıyor...")
+            
+            # DEBUG: Eski tek işlemci ile geçen süre bilgisini ekle
+            self.logger.info(f"⏰ Tahmini eski süre: ~{len(ticker_data) * 0.2:.1f} saniye olacaktı (tek işlemci ile)")
+                
+            # Fırsatları çoklu işlemci ile analiz et
+            self.logger.info(f"🛠️  Çoklu işlemci analizi başlatılıyor...")
+            opportunities = await self.analyzer.analyze_market_parallel(ticker_data, interval, worker_count)
+            
+            # İşlem süresi hesaplama
+            end_time = time.time()
+            elapsed_time = end_time - start_time
             
             if not opportunities:
                 self.logger.warning("Fırsat bulunamadı!")
+                self.logger.info(f"\n==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI [Süre: {elapsed_time:.2f}s] ====\n")
                 return []
+            
+            # DEBUG: Performans özeti
+            estimated_old_time = len(ticker_data) * 0.2  # Tahmini eski süre
+            speedup = estimated_old_time / elapsed_time
+            
+            self.logger.info(f"\n📈 PERFORMANS ÖZETİ:")
+            self.logger.info(f"⏱️ Toplam süre: {elapsed_time:.2f} saniye")
+            self.logger.info(f"💯 Hızlanma oranı: {speedup:.2f}x ({worker_count} işlemci ile)")
+            self.logger.info(f"💡 İşlemci başına: {elapsed_time/worker_count:.2f} saniye")
+            self.logger.info(f"\n==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====\n")
                 
             return opportunities
         except Exception as e:

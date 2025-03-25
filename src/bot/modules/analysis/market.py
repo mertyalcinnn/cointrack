@@ -6,6 +6,9 @@ import pandas as pd
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import asyncio
+import concurrent.futures
+import multiprocessing
+from functools import partial
 from .advanced_analysis import AdvancedAnalyzer, SignalStrength
 
 class MarketAnalyzer:
@@ -461,92 +464,102 @@ class MarketAnalyzer:
         return float(atr)
 
     def _analyze_position_recommendation(self, 
-                                       rsi: float, 
-                                       macd: float, 
-                                       ema20: float,
-                                       ema50: float,
-                                       bb_upper: float,
-                                       bb_lower: float,
-                                       current_price: float,
-                                       opportunity_score: float,
-                                       volume_surge: bool) -> dict:
-        """Long/Short pozisyon önerisi analizi"""
+                                  rsi: float, 
+                                  macd: float, 
+                                  ema20: float,
+                                  ema50: float,
+                                  bb_upper: float,
+                                  bb_lower: float,
+                                  current_price: float,
+                                  opportunity_score: float,
+                                  volume_surge: bool) -> dict:
+        """Pozisyon önerisi analizi - Geliştirilmiş versiyon"""
         long_points = 0
         short_points = 0
         reasons = []
         
-        # RSI Analizi
+        # RSI Analizi - Daha net ayırım
         if rsi < 30:
-            long_points += 3
+            long_points += 4  # Arttırıldı
             reasons.append("💚 RSI aşırı satım bölgesinde (LONG)")
         elif rsi > 70:
-            short_points += 3
+            short_points += 4  # Arttırıldı
             reasons.append("❤️ RSI aşırı alım bölgesinde (SHORT)")
-        elif rsi < 45:
-            long_points += 1
+        elif rsi < 40:
+            long_points += 2  # Daha yüksek aralık
             reasons.append("💚 RSI satım bölgesine yakın (LONG)")
-        elif rsi > 55:
-            short_points += 1
+        elif rsi > 60:
+            short_points += 2  # Daha yüksek aralık
             reasons.append("❤️ RSI alım bölgesine yakın (SHORT)")
+        # 40-60 aralığında hiçbir puan verme
             
-        # MACD Analizi
-        if macd > 0 and macd > abs(macd) * 0.02:  # Pozitif ve belirli bir eşiğin üzerinde
-            long_points += 2
+        # MACD Analizi - Daha güçlü etki
+        if macd > 0 and macd > abs(macd) * 0.05:  # Eşik arttırıldı
+            long_points += 3  # Arttırıldı
             reasons.append("💚 MACD güçlü pozitif sinyal (LONG)")
-        elif macd < 0 and abs(macd) > abs(macd) * 0.02:  # Negatif ve belirli bir eşiğin üzerinde
-            short_points += 2
+        elif macd < 0 and abs(macd) > abs(macd) * 0.05:  # Eşik arttırıldı
+            short_points += 3
             reasons.append("❤️ MACD güçlü negatif sinyal (SHORT)")
             
-        # EMA Trend Analizi
-        if ema20 > ema50:
-            if (ema20 - ema50) / ema50 * 100 > 1:  # %1'den fazla fark
+        # EMA Trend Analizi - Daha net trend ayrımı
+        ema_diff_percent = (ema20 - ema50) / ema50 * 100
+        
+        if ema_diff_percent > 1:  # %1'den fazla fark
+            long_points += 4  # Arttırıldı
+            reasons.append("💚 Güçlü yükseliş trendi - EMA20 > EMA50 (LONG)")
+        elif ema_diff_percent > 0.2:  # %0.2'den fazla fark
+            long_points += 2  # Arttırıldı
+            reasons.append("💚 Yükseliş trendi başlangıcı (LONG)")
+        elif ema_diff_percent < -1:  # %1'den fazla fark
+            short_points += 4  # Arttırıldı
+            reasons.append("❤️ Güçlü düşüş trendi - EMA20 < EMA50 (SHORT)")
+        elif ema_diff_percent < -0.2:  # %0.2'den fazla fark
+            short_points += 2  # Arttırıldı
+            reasons.append("❤️ Düşüş trendi başlangıcı (SHORT)")
+        
+        # Bollinger Bands Analizi - Net bir ayırım için
+        if current_price > 0 and bb_upper > bb_lower:  # Sıfır kontrolü
+            bb_position = (current_price - bb_lower) / (bb_upper - bb_lower) * 100
+            if bb_position < 10:  # Daha kesin sınırlar
+                long_points += 5  # Arttırıldı
+                reasons.append("💚 Fiyat BB alt bandının altında (GÜÇLÜ LONG)")
+            elif bb_position < 20:
                 long_points += 3
-                reasons.append("💚 Güçlü yükseliş trendi - EMA20 > EMA50 (LONG)")
-            else:
-                long_points += 1
-                reasons.append("💚 Yükseliş trendi başlangıcı (LONG)")
-        else:
-            if (ema50 - ema20) / ema50 * 100 > 1:  # %1'den fazla fark
+                reasons.append("💚 Fiyat BB alt bandına yakın (LONG)")
+            elif bb_position > 90:  # Daha kesin sınırlar
+                short_points += 5  # Arttırıldı
+                reasons.append("❤️ Fiyat BB üst bandının üstünde (GÜÇLÜ SHORT)")
+            elif bb_position > 80:
                 short_points += 3
-                reasons.append("❤️ Güçlü düşüş trendi - EMA20 < EMA50 (SHORT)")
+                reasons.append("❤️ Fiyat BB üst bandına yakın (SHORT)")
+        
+        # Hacim analizi - Daha net yorumla
+        if volume_surge:
+            if long_points > short_points * 1.5:  # Büyük fark varsa hacim sinyali güçlendir
+                long_points += 3  # Arttırıldı
+                reasons.append("💚 Yüksek hacimle yükseliş (LONG)")
+            elif short_points > long_points * 1.5:  # Büyük fark varsa hacim sinyali güçlendir
+                short_points += 3  # Arttırıldı
+                reasons.append("❤️ Yüksek hacimle düşüş (SHORT)")
+        
+        # Eklenen emniyet kontrolü - minimum puan farkı
+        if abs(long_points - short_points) < 2:
+            # Puanlar çok yakınsa, EMA trendine göre karar ver
+            if ema20 > ema50:
+                long_points += 1
             else:
                 short_points += 1
-                reasons.append("❤️ Düşüş trendi başlangıcı (SHORT)")
-            
-        # Bollinger Bands Analizi
-        bb_position = (current_price - bb_lower) / (bb_upper - bb_lower)
-        if bb_position < 0.1:
-            long_points += 3
-            reasons.append("💚 Fiyat BB alt bandının altında (GÜÇLÜ LONG)")
-        elif bb_position < 0.2:
-            long_points += 2
-            reasons.append("💚 Fiyat BB alt bandına yakın (LONG)")
-        elif bb_position > 0.9:
-            short_points += 3
-            reasons.append("❤️ Fiyat BB üst bandının üstünde (GÜÇLÜ SHORT)")
-        elif bb_position > 0.8:
-            short_points += 2
-            reasons.append("❤️ Fiyat BB üst bandına yakın (SHORT)")
-
-        # Hacim analizi
-        if volume_surge:
-            if long_points > short_points:
-                long_points += 2
-                reasons.append("💚 Yüksek hacimle yükseliş (LONG)")
-            elif short_points > long_points:
-                short_points += 2
-                reasons.append("❤️ Yüksek hacimle düşüş (SHORT)")
-
-        # Pozisyon türünü ve gücünü belirle
-        if long_points > short_points:
-            if long_points - short_points >= 5:
+        
+        # Pozisyon türünü ve gücünü belirle - daha net ayırım
+        if long_points > short_points + 2:  # Minimum fark şartı
+            if long_points >= 8:  # Yükseltildi
                 position_type = "STRONG_LONG"
                 confidence = 3
             else:
                 position_type = "LONG"
                 confidence = 2
-        elif short_points > long_points:
-            if short_points - long_points >= 5:
+        elif short_points > long_points + 2:  # Minimum fark şartı
+            if short_points >= 8:  # Yükseltildi
                 position_type = "STRONG_SHORT"
                 confidence = 3
             else:
@@ -559,13 +572,21 @@ class MarketAnalyzer:
         # Kaldıraç önerisi
         leverage = self._recommend_leverage(opportunity_score, position_type, confidence)
         
+        # Debug için ekstra bilgi ekle
+        debug_info = {
+            'long_points': long_points,
+            'short_points': short_points,
+            'ema_diff_percent': ema_diff_percent
+        }
+        
         return {
             'position': position_type,
             'confidence': confidence,
             'leverage': leverage,
             'reasons': reasons,
             'risk_level': self._get_risk_level(leverage),
-            'score': opportunity_score
+            'score': opportunity_score,
+            'debug': debug_info  # Analiz için debug bilgisi
         }
 
     def _recommend_leverage(self, opportunity_score: float, position_type: str, confidence: int) -> int:
@@ -959,6 +980,558 @@ class MarketAnalyzer:
                 'short_position': {'stop_loss': 0, 'take_profit': 0, 'risk_reward': 0},
                 'signals': {'long_signals': 0, 'short_signals': 0, 'rsi': 0, 'macd_hist': 0, 'bb_position': 'NEUTRAL'}
             }
+
+    async def analyze_market_parallel(self, ticker_data: list, interval: str = '4h', worker_count=None) -> list:
+        """Çoklu işlemci kullanarak piyasa analizi yapan yeni fonksiyon"""
+        try:
+            # Başlangıç zamanını kaydet (performans ölçümü için)
+            import time
+            start_time = time.time()
+            
+            # Sayaçları sıfırla
+            self.analysis_stats = {key: 0 for key in self.analysis_stats}
+            self.analysis_stats['total_coins'] = len(ticker_data)
+            
+            # İşçi sayısını belirleme (eğer belirtilmemişse)
+            if worker_count is None:
+                # Sistem CPU sayısına göre işçi sayısını belirle (CPU sayısı - 1)
+                worker_count = max(1, multiprocessing.cpu_count() - 1)
+                # İşlemci sayısını 6 ile sınırla (daha fazla işlemci genellikle daha yavaş olabilir)
+                worker_count = min(worker_count, 6)
+            
+            # DEBUG: İşlemci bilgilerini logla
+            self.logger.info(f"🔍 Toplam {len(ticker_data)} coin {worker_count} işlemci ile taranıyor...")
+            self.logger.info(f"🖥️  Sistem toplam CPU sayısı: {multiprocessing.cpu_count()}")
+            
+            # API çağrı sıklığı sınırlarını azaltmak için sembol listesini küçült
+            # Popüler coinleri her zaman dahil et
+            popular_coins = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "SOLUSDT"]
+            usdt_pairs = [ticker for ticker in ticker_data if ticker['symbol'].endswith('USDT')]
+            
+            # Eğer çok fazla coin varsa, hacim ve fiyata göre bir ilk filtrelemeyi burada yap
+            if len(usdt_pairs) > 200:  # Eğer 200'den fazla coin varsa
+                processed_symbols = set(popular_coins)
+                filtered_pairs = []
+                
+                # Önce popüler coinleri ekle
+                for ticker in usdt_pairs:
+                    if ticker['symbol'] in popular_coins:
+                        filtered_pairs.append(ticker)
+                
+                # Sonra hacime göre sıralayarak kalan coinleri ekle (en yüksek hacimli coinler)
+                other_pairs = [t for t in usdt_pairs if t['symbol'] not in popular_coins]
+                other_pairs.sort(key=lambda x: float(x['quoteVolume']), reverse=True)
+                
+                # Yalnızca ilk 200 (veya daha az) coin'i analiz et
+                filtered_pairs.extend(other_pairs[:200-len(filtered_pairs)])
+                
+                # İstatistikleri güncelle
+                self.logger.info(f"📊 İlk filtreme sonucu: {len(usdt_pairs)} coin'den {len(filtered_pairs)} coin'e düşürüldü.")
+                usdt_pairs = filtered_pairs
+            
+            self.analysis_stats['valid_pairs'] = len(usdt_pairs)
+            
+            # Ön filtreleme (fiyat ve hacim) - Multi-threaded yaparak hızlandırma
+            filtered_pairs = []
+            
+            def filter_pair(ticker):
+                try:
+                    current_price = float(ticker['lastPrice'])
+                    current_volume = float(ticker['quoteVolume'])
+                    
+                    if current_price < self.min_price:
+                        return None
+                    if current_volume < self.min_volume:
+                        return None
+                    return ticker
+                except:
+                    return None
+            
+            # Thread havuzu ile filtreleme - ana threadleri bloklamadan
+            # Önceki ve sonraki işlemlerle paralellik için
+            import threading
+            filter_results = []
+            
+            def filter_batch(batch):
+                results = []
+                for ticker in batch:
+                    result = filter_pair(ticker)
+                    if result:
+                        results.append(result)
+                filter_results.extend(results)
+            
+            # Çok büyük veri kümeleri için thread'lere böl
+            batch_size = len(usdt_pairs) // 4  # 4 thread kullan
+            batches = [usdt_pairs[i:i+batch_size] for i in range(0, len(usdt_pairs), batch_size)]
+            
+            threads = []
+            for batch in batches:
+                thread = threading.Thread(target=filter_batch, args=(batch,))
+                threads.append(thread)
+                thread.start()
+                
+            # Tüm threadlerin tamamlanmasını bekle
+            for thread in threads:
+                thread.join()
+                
+            filtered_pairs = filter_results
+            
+            # Filtreleme istatistiklerini hesapla
+            self.analysis_stats['price_filtered'] = 0
+            self.analysis_stats['volume_filtered'] = 0
+            for ticker in usdt_pairs:
+                try:
+                    if ticker not in filtered_pairs:
+                        current_price = float(ticker['lastPrice'])
+                        current_volume = float(ticker['quoteVolume'])
+                        
+                        if current_price < self.min_price:
+                            self.analysis_stats['price_filtered'] += 1
+                        elif current_volume < self.min_volume:
+                            self.analysis_stats['volume_filtered'] += 1
+                except Exception as e:
+                    continue
+            
+            # İşlemci başına batch hesaplama - load dengesini daha iyi sağlamak için
+            # Not: Büyük batche düşük işlemci sayısı daha iyi olabilir
+            if len(filtered_pairs) < worker_count * 5:
+                # Çok az coin varsa worker sayısını azalt
+                worker_count = max(1, len(filtered_pairs) // 3)
+                self.logger.info(f"⚠️  Çok az coin var. İşlemci sayısı {worker_count}'e düşürüldü.")
+            
+            # İşlemci başına düşen coin sayısını optimize etmek için batch size'i ayarla
+            batch_size = max(1, min(10, len(filtered_pairs) // worker_count))
+            batches = []
+            
+            # Daha akıllı load balancing - hacime göre sırala ve dağıt
+            # Böylece her işlemciye hem yüksek hem düşük hacimli coinler düşer
+            filtered_pairs.sort(key=lambda x: float(x['quoteVolume']), reverse=True)
+            
+            # Hacim sıralı listeyi işlemcilere dağıt
+            for i in range(worker_count):
+                batch = filtered_pairs[i::worker_count]  # Her işlemciye bir coin atla
+                if batch:  # Boş batch oluşturma
+                    batches.append(batch)
+            
+            if not filtered_pairs:
+                self.logger.warning("Filtreleme sonrası coin kalmadı!")
+                return []
+                
+            self.logger.info(f"📌 Filtreleme sonrası {len(filtered_pairs)} coin analiz edilecek")
+            self.logger.info(f"🛠️  {len(batches)} batch oluşturuldu (işlemci başına ~{len(filtered_pairs)/max(1, len(batches)):.1f} coin)")
+            
+            # Analiz işlemini paralel olarak çalıştır
+            loop = asyncio.get_event_loop()
+            
+            opportunities = []
+            with concurrent.futures.ProcessPoolExecutor(max_workers=worker_count) as executor:
+                # Her batch için _analyze_batch fonksiyonunu çağır
+                analyze_batch_partial = partial(self._analyze_batch, interval=interval)
+                
+                # Senkronize edilerek yapılan RPC çağrısını ölç
+                batch_start_time = time.time()
+                batch_results = await loop.run_in_executor(
+                    None,
+                    lambda: list(executor.map(analyze_batch_partial, batches))
+                )
+                batch_end_time = time.time()
+                batch_elapsed = batch_end_time - batch_start_time
+                
+                # İşlemci başına süreyi hesapla
+                self.logger.info(f"⏱️  Paralel işlemler {batch_elapsed:.2f} saniyede tamamlandı (işlemci başına ~{batch_elapsed/max(1, len(batches)):.2f}s)")
+                
+                # DEBUG: işlemci başına analiz edilecek coin sayısını logla
+                for i, batch in enumerate(batches):
+                    self.logger.debug(f"Worker {i+1}: {len(batch)} coin analiz edilecek")
+                
+                # Sonuçları birleştir
+                for i, batch_result in enumerate(batch_results):
+                    # DEBUG: Her işlemcinin sonuçlarını logla
+                    self.logger.debug(f"Worker {i+1} Sonucu: {len(batch_result['opportunities'])} fırsat bulundu, " + 
+                                 f"Başarılı: {batch_result['stats']['success']}, " + 
+                                 f"Başarısız: {batch_result['stats']['failed']}")
+                    
+                    opportunities.extend(batch_result['opportunities'])
+                    
+                    # İstatistikleri güncelle
+                    self.analysis_stats['analysis_success'] += batch_result['stats']['success']
+                    self.analysis_stats['analysis_failed'] += batch_result['stats']['failed']
+                
+            # Süre hesaplama
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            
+            # Analiz istatistiklerini logla
+            self.logger.info("\n📊 TARAMA İSTATİSTİKLERİ:")
+            self.logger.info(f"📌 Toplam Coin: {self.analysis_stats['total_coins']}")
+            self.logger.info(f"✅ Geçerli USDT Çiftleri: {self.analysis_stats['valid_pairs']}")
+            self.logger.info(f"💰 Fiyat Filtresi: {self.analysis_stats['price_filtered']}")
+            self.logger.info(f"📊 Hacim Filtresi: {self.analysis_stats['volume_filtered']}")
+            self.logger.info(f"✨ Başarılı Analiz: {self.analysis_stats['analysis_success']}")
+            self.logger.info(f"❌ Başarısız Analiz: {self.analysis_stats['analysis_failed']}")
+            self.logger.info(f"⏱️ Toplam Süre: {elapsed_time:.2f} saniye ({worker_count} işlemci ile)")
+            
+            # Fırsatları puana göre sırala
+            opportunities.sort(key=lambda x: x['opportunity_score'], reverse=True)
+            
+            if opportunities:
+                self.logger.info(f"🎯 Bulunan Fırsat Sayısı: {len(opportunities)}")
+            else:
+                self.logger.info("❌ Fırsat bulunamadı")
+            
+            return opportunities[:10]  # En iyi 10 fırsatı döndür
+            
+        except Exception as e:
+            self.logger.error(f"Parallel market analysis error: {str(e)}")
+            return []
+        finally:
+            try:
+                await self.exchange.close()
+            except:
+                pass
+
+    def _analyze_batch(self, batch: list, interval: str = '4h'):
+        """Bir batch içindeki coinleri seri olarak analiz et - Process havuzunda çalışır"""
+        import ccxt  # Yeni process için gereken importlar
+        import pandas as pd
+        import numpy as np
+        import concurrent.futures
+        import time
+        
+        start_time = time.time()
+        opportunities = []
+        stats = {'success': 0, 'failed': 0}
+        
+        # API çağrı sayısını azaltmak için bir exchange nesnesi oluştur
+        exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        
+        # Eş zamanlı işlem
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as thread_executor:
+            # API çağrılarını eş zamanlı yap
+            future_to_symbol = {}
+            
+            for ticker in batch:
+                symbol = ticker['symbol']
+                future = thread_executor.submit(
+                    self._analyze_single_coin_data, 
+                    exchange, 
+                    symbol, 
+                    interval, 
+                    float(ticker['lastPrice']),
+                    float(ticker['quoteVolume'])
+                )
+                future_to_symbol[future] = symbol
+                
+            # Tüm sonuçları topla
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result = future.result()
+                    if result:
+                        opportunities.append(result)
+                        stats['success'] += 1
+                    else:
+                        stats['failed'] += 1
+                except Exception as e:
+                    stats['failed'] += 1
+        
+        end_time = time.time()
+        elapsed = end_time - start_time
+        
+        # Peformanns debug bilgisi
+        print(f"Batch of {len(batch)} coins processed in {elapsed:.2f}s - Success: {stats['success']}, Failed: {stats['failed']}")
+        
+        return {'opportunities': opportunities, 'stats': stats}
+    
+    def _analyze_single_coin_data(self, exchange, symbol, interval, current_price, current_volume):
+        """Tek bir coin için analiz işlemi yap - Thread içinde çalışır"""
+        try:
+            # OHLCV verileri al
+            try:
+                ohlcv = exchange.fetch_ohlcv(symbol, interval, limit=50)
+                if not ohlcv or len(ohlcv) < 30:
+                    return None
+                
+                # DataFrame oluştur (gelişmiş stop/loss hesaplaması için)
+                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                
+            except Exception as e:
+                return None
+            
+            # Temel hesaplamalar
+            closes = np.array([float(candle[4]) for candle in ohlcv])
+            volumes = np.array([float(candle[5]) for candle in ohlcv])
+            
+            # Teknik indikatörler
+            indicators = self._calculate_technical_indicators(closes, volumes)
+            
+            # Hacim analizi
+            volume_analysis = self._analyze_volume(current_volume, volumes)
+            
+            # Fırsat puanı hesapla
+            opportunity_score = self._calculate_opportunity_score(
+                indicators['rsi'][-1],
+                indicators['macd_hist'][-1],
+                volume_analysis['volume_surge'],
+                indicators['trend'],
+                current_volume,
+                volume_analysis['avg_volume']
+            )
+            
+            if opportunity_score < 40:
+                return None
+            
+            # Pozisyon önerisi
+            position_rec = self._analyze_position_recommendation(
+                indicators['rsi'][-1], 
+                indicators['macd_hist'][-1],
+                indicators['ema20'][-1],
+                indicators['ema50'][-1],
+                indicators['bb_upper'],
+                indicators['bb_lower'],
+                current_price,
+                opportunity_score,
+                volume_analysis['volume_surge']
+            )
+            
+            # Gelişmiş stop/loss ve take profit hesapla
+            risk_management = None
+            actual_position_type = "LONG" if "LONG" in position_rec['position'] else "SHORT" if "SHORT" in position_rec['position'] else "NEUTRAL"
+            
+            if actual_position_type in ["LONG", "SHORT"]:
+                risk_management = self.calculate_advanced_stoploss(df, current_price, actual_position_type)
+            
+            # Sonuç oluştur
+            result = {
+                'symbol': symbol,
+                'price': current_price,
+                'volume': current_volume,
+                'rsi': float(indicators['rsi'][-1]),
+                'macd': float(indicators['macd_hist'][-1]),
+                'trend': indicators['trend'],
+                'volume_surge': volume_analysis['volume_surge'],
+                'opportunity_score': float(opportunity_score),
+                'signal': self._determine_signal(opportunity_score, indicators['rsi'][-1], indicators['trend']),
+                'position_recommendation': position_rec['position'],
+                'position_confidence': position_rec['confidence'],
+                'recommended_leverage': position_rec['leverage'],
+                'risk_level': position_rec['risk_level'],
+                'analysis_reasons': position_rec['reasons'],
+                'score': position_rec['score'],
+                'ema20': float(indicators['ema20'][-1]),
+                'ema50': float(indicators['ema50'][-1]),
+                'bb_upper': float(indicators['bb_upper']),
+                'bb_middle': float(indicators['bb_middle']),
+                'bb_lower': float(indicators['bb_lower'])
+            }
+            
+            # Risk yönetimi bilgilerini ekle
+            if risk_management:
+                result.update({
+                    'advanced_stoploss': risk_management['stoploss'],
+                    'take_profit_levels': risk_management['take_profits'],
+                    'trailing_activation': risk_management['trailing_activation'],
+                    'trailing_step': risk_management['trailing_step'],
+                    'risk_percent': risk_management['risk_percent'],
+                    'atr': risk_management['atr']
+                })
+            
+            return result
+            
+        except Exception as e:
+            return None
+
+    def _calculate_technical_indicators(self, closes: np.ndarray, volumes: np.ndarray) -> Dict:
+        """Tüm teknik indikatörleri tek bir fonksiyonda hesapla"""
+        try:
+            # RSI
+            rsi = self._calculate_rsi_quick(closes)
+            
+            # MACD
+            macd, signal, hist = self._calculate_macd_quick(closes)
+            
+            # Bollinger Bands
+            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands_quick(closes)
+            
+            # EMA
+            ema20 = self._calculate_ema_quick(closes, 20)
+            ema50 = self._calculate_ema_quick(closes, 50)
+            
+            # Trend
+            trend = "YUKARI" if ema20[-1] > ema50[-1] else "AŞAĞI"
+            
+            return {
+                'rsi': rsi,
+                'macd': macd,
+                'macd_signal': signal,
+                'macd_hist': hist,
+                'bb_upper': bb_upper,
+                'bb_middle': bb_middle,
+                'bb_lower': bb_lower,
+                'ema20': ema20,
+                'ema50': ema50,
+                'trend': trend
+            }
+        except Exception as e:
+            self.logger.error(f"Teknik indikatör hesaplama hatası: {e}")
+            return None
+
+    def _analyze_volume(self, current_volume: float, volumes: np.ndarray) -> Dict:
+        """Hacim analizini tek bir fonksiyonda yap"""
+        try:
+            avg_volume = np.mean(volumes[-10:])
+            volume_surge = current_volume > (avg_volume * 1.2)
+            
+            return {
+                'avg_volume': avg_volume,
+                'volume_surge': volume_surge,
+                'volume_ratio': current_volume / avg_volume if avg_volume > 0 else 1
+            }
+        except Exception as e:
+            self.logger.error(f"Hacim analizi hatası: {e}")
+            return {
+                'avg_volume': 0,
+                'volume_surge': False,
+                'volume_ratio': 1
+            }
+
+    def _calculate_rsi_quick(self, prices, period=14):
+        # Orijinal metot ile aynı ama optimize edildi
+        # Son verileri kullanarak hızlı hesaplama
+        deltas = np.diff(prices[-period-10:])  # Son periyot+10 veri al
+        seed = deltas[:period+1]
+        up = seed[seed >= 0].sum()/period
+        down = -seed[seed < 0].sum()/period
+        rs = up/down if down != 0 else 0
+        rsi = np.zeros(len(prices[-period-10:]))
+        rsi[:period] = 100. - 100./(1.+rs)
+
+        for i in range(period, len(prices[-period-10:])):
+            delta = deltas[i-1]
+            if delta > 0:
+                upval = delta
+                downval = 0.
+            else:
+                upval = 0.
+                downval = -delta
+
+            up = (up*(period-1) + upval)/period
+            down = (down*(period-1) + downval)/period
+            rs = up/down if down != 0 else 0
+            rsi[i] = 100. - 100./(1.+rs)
+
+        return rsi[-5:]
+
+    def _calculate_macd_quick(self, prices):
+        # Karsılaştırma için son verileri al
+        prices_subset = prices[-40:]  # Son 40 veri yeterli
+        exp1 = pd.Series(prices_subset).ewm(span=12, adjust=False).mean()
+        exp2 = pd.Series(prices_subset).ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        hist = macd - signal
+        return macd.values, signal.values, hist.values
+
+    def _calculate_bollinger_bands_quick(self, prices, period=20):
+        # Son verileri kullanarak BB hesapla
+        prices_subset = prices[-period-5:]  # Son period+5 veri
+        sma = np.mean(prices_subset[-period:])
+        std = np.std(prices_subset[-period:])
+        upper = sma + (std * 2)
+        lower = sma - (std * 2)
+        return upper, sma, lower
+
+    def _calculate_ema_quick(self, prices, period):
+        # Son verileri kullanarak EMA hesapla
+        prices_subset = prices[-period-15:]  # Son period+15 veri
+        return pd.Series(prices_subset).ewm(span=period, adjust=False).mean().values
+
+    def _calculate_opportunity_score_quick(self, rsi, macd, volume_surge, trend,
+                                   current_volume, avg_volume):
+        # Basitleştirilmiş fırsat puanı hesaplama
+        score = 0
+        
+        # RSI bazlı puan (0-30)
+        if rsi < 30:  # Aşırı satım
+            score += 30
+        elif rsi > 70:  # Aşırı alım
+            score += 10
+        else:
+            score += 20
+            
+        # MACD bazlı puan (0-20)
+        if macd > 0:
+            score += 20
+        elif macd < 0:
+            score += 5
+        
+        # Hacim bazlı puan (0-30)
+        if volume_surge:
+            score += 30
+        else:
+            score += 20 if current_volume > avg_volume else 10
+            
+        # Trend bazlı puan (0-20)
+        if trend == "YUKARI":
+            score += 20
+        else:
+            score += 10
+            
+        return min(100, score)
+
+    def _analyze_position_recommendation_quick(self, 
+                                       rsi, 
+                                       macd, 
+                                       ema20,
+                                       ema50,
+                                       bb_upper,
+                                       bb_lower,
+                                       current_price,
+                                       opportunity_score,
+                                       volume_surge):
+        # Basitleştirilmiş pozisyon önerisi
+        is_bullish = (ema20 > ema50) or (rsi < 40) or (macd > 0)
+        is_bearish = (ema20 < ema50) or (rsi > 60) or (macd < 0)
+        
+        if rsi < 30 and current_price < (bb_lower * 1.05):
+            position_type = "STRONG_LONG"
+            confidence = 3
+            reasons = ["RSI aşırı satım bölgesinde", "Fiyat BB alt bandının altında"]
+        elif rsi > 70 and current_price > (bb_upper * 0.95):
+            position_type = "STRONG_SHORT"
+            confidence = 3
+            reasons = ["RSI aşırı alım bölgesinde", "Fiyat BB üst bandının üstünde"]
+        elif is_bullish and not is_bearish:
+            position_type = "LONG"
+            confidence = 2
+            reasons = ["Eğilim yükseliyor"]
+        elif is_bearish and not is_bullish:
+            position_type = "SHORT"
+            confidence = 2
+            reasons = ["Eğilim düşüyor"]
+        else:
+            position_type = "NEUTRAL"
+            confidence = 1
+            reasons = ["Net bir eğilim yok"]
+            
+        # Kaldıraç önerisi
+        leverage = 2  # Varsayılan düşük kaldıraç
+        if opportunity_score > 80:
+            leverage = 10
+        elif opportunity_score > 60:
+            leverage = 5
+            
+        return {
+            'position': position_type,
+            'confidence': confidence,
+            'leverage': leverage,
+            'reasons': reasons,
+            'risk_level': "YÜKSEK" if leverage > 5 else "ORTA",
+            'score': opportunity_score
+        }
 
     def _generate_signal(self, rsi: float, macd: float, price: float, bb_upper: float, bb_lower: float) -> str:
         """Sinyal üret"""
