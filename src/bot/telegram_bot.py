@@ -20,10 +20,11 @@ import numpy as np
 import logging
 import json
 from .modules.market_analyzer import MarketAnalyzer
+from .modules.analysis.dual_timeframe_analyzer import DualTimeframeAnalyzer
 from .modules.handlers.scan_handler import ScanHandler
 from .modules.handlers.track_handler import TrackHandler
 from .modules.message_formatter import MessageFormatter
-from .modules.utils.logger import setup_logger
+from .modules.scalp_command import cmd_scalp, _format_scalp_result, _format_scalp_opportunities
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from io import BytesIO
@@ -32,6 +33,10 @@ from PIL import Image, ImageDraw, ImageFont
 import base64
 import functools
 import random
+from .modules.analysis.dual_timeframe_analyzer import DualTimeframeAnalyzer
+from .modules.analysis.market import MarketAnalyzer
+from logging.handlers import RotatingFileHandler
+from src.bot.multi_timeframe_handler import MultiTimeframeHandler
 
 # .env dosyasının yolunu bul
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -267,6 +272,45 @@ class PremiumManager:
             'message': message
         }
 
+def setup_logger(name: str) -> logging.Logger:
+    """Bot için logger ayarla"""
+    # Log klasörünü oluştur
+    log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Logger oluştur
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    
+    # Dosya handler'ı ekle (rotasyonlu)
+    log_file = os.path.join(log_dir, f'{name}.log')
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5*1024*1024,  # 5MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+    
+    # Konsol handler'ı ekle
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Formatter oluştur
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Handler'lara formatter ekle
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Logger'a handler'ları ekle
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
 class TelegramBot:
     def __init__(self, token: str):
         """Initialize the bot with API keys and configuration"""
@@ -279,6 +323,14 @@ class TelegramBot:
         
         # Initialize technical analysis module
         self.analyzer = MarketAnalyzer(self.logger)
+        
+        # Initialize exchange connection
+        self.exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot'
+            }
+        })
         
         # Initialize tracking variables
         self.tracked_coins = {}  # {chat_id: {symbol: {'entry_price': float, 'last_update': datetime}}}
@@ -307,7 +359,11 @@ class TelegramBot:
         # Takip edilen coinleri sakla
         self.tracked_coins = {}
         
-        # Tarama sonuçlarını sakla
+        # Market analyzer'ı ekle
+        self.analyzer = MarketAnalyzer(self.logger)
+        self.dual_analyzer = self.analyzer  # MarketAnalyzer'ı dual analyzer olarak da kullan
+        
+        # Son tarama sonuçlarını saklamak için dict
         self.last_scan_results = {}
         
         # Handler'ları kaydet
@@ -318,6 +374,15 @@ class TelegramBot:
         
         self.logger.info("Telegram Bot hazır!")
         
+        # MultiTimeframeHandler'ı başlat
+        try:
+            self.multi_handler = MultiTimeframeHandler(logger=self.logger, bot_instance=self)
+            self.logger.info("MultiTimeframeHandler başarıyla başlatıldı")
+        except Exception as e:
+            self.logger.error(f"MultiTimeframeHandler başlatma hatası: {e}")
+            # Hata olsa bile devam edebilmek için varsayılan bir değer atayalım
+            self.multi_handler = None
+        
     @telegram_retry(max_tries=5, backoff_factor=2)
     async def start(self):
         """Bot'u başlat"""
@@ -325,8 +390,29 @@ class TelegramBot:
         bot_instance = self
         
         self.logger.info("Bot başlatılıyor...")
+        
+        # Bot başlatılıyor
         await self.application.initialize()
+        
+        # MultiTimeframeHandler'ı başlat
+        try:
+            if self.multi_handler:
+                await self.multi_handler.initialize()
+                self.logger.info("MultiTimeframeHandler başarıyla initialize edildi")
+        except Exception as e:
+            self.logger.error(f"MultiTimeframeHandler initialize hatası: {e}")
+        
+        # Diğer başlatma işlemleri
         await self.application.start()
+        
+        # MultiTimeframeHandler'ın komutlarını kaydet
+        try:
+            if self.multi_handler:
+                self.multi_handler.register_handlers(self.application)
+                self.logger.info("MultiTimeframeHandler komutları kaydedildi")
+        except Exception as e:
+            self.logger.error(f"MultiTimeframeHandler komut kayıt hatası: {e}")
+        
         await self.application.updater.start_polling()
         
         self.logger.info("Bot başlatıldı!")
@@ -375,6 +461,7 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("chart", self.cmd_chart))
         self.application.add_handler(CommandHandler("analyze", self.cmd_analyze))
         self.application.add_handler(CommandHandler("stats", self.stats_command))
+        self.application.add_handler(CommandHandler("scalp", self.cmd_scalp))
         
         # Premium komutları
         self.application.add_handler(CommandHandler("premium", self.premium_command))
@@ -388,6 +475,14 @@ class TelegramBot:
         
         # Callback handlers - bunları başlangıçta kaydet
         self.application.add_handler(CallbackQueryHandler(self.handle_callback_query))
+        
+        # MultiTimeframeHandler'ın komutlarını kaydet
+        try:
+            if self.multi_handler:
+                self.multi_handler.register_handlers(self.application)
+                self.logger.info("MultiTimeframeHandler komutları kaydedildi")
+        except Exception as e:
+            self.logger.error(f"MultiTimeframeHandler komut kayıt hatası: {e}")
     
     async def error_handler(self, update, context):
         """Hataları işle"""
@@ -502,40 +597,50 @@ class TelegramBot:
             )
     
     @telegram_retry()
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Help komutunu işle"""
-        try:
-            user_id = update.effective_user.id
-            is_premium = self.premium_manager.is_premium(user_id)
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Bot komutları hakkında yardım mesajı gönderir"""
+        help_text = (
+            "📚 *Coinim Bot Komutları* 📚\n\n"
             
-            # Premium durumuna göre mesajı özelleştir
-            premium_text = ""
-            if not is_premium:
-                premium_text = "⭐ Premium özellikler için /premium komutunu kullanabilirsiniz.\n\n"
+            "🔍 *Temel Tarama Komutları:*\n"
+            "/scan - Tüm market için fırsat taraması yapar\n"
+            "/scalp - Tek bir coin için scalping analizi yapar\n"
+            "/multiscan - Çoklu zaman dilimi analizi yapar (Haftalık + Saatlik + 15dk)\n\n"
             
-            await update.message.reply_text(
-                "📚 KOMUT KILAVUZU\n\n"
-                f"{premium_text}"
-                "🔍 /scan - Piyasayı tara ve fırsatları bul ⭐\n"
-                "   /scan scan15 - 4 saatlik önerilen işlemler ⭐\n"
-                "   /scan scan4 - Alternatif 4 saatlik tarama ⭐\n\n"
-                "📈 /track - Bir coini takip et ⭐\n"
-                "   /track 1 - Tarama sonucundan 1. coini takip et ⭐\n"
-                "   /track BTCUSDT - BTC'yi direkt takip et ⭐\n\n"
-                "🛑 /stoptrack - Takip edilen coinleri durdur ⭐\n"
-                "   /stoptrack - Takip edilen coinleri listele ve seç ⭐\n"
-                "   /stoptrack BTCUSDT - BTC takibini durdur ⭐\n\n"
-                "📊 /chart BTCUSDT - Teknik analiz grafiği oluştur ⭐\n\n"
-                "🔬 /analyze BTCUSDT - Detaylı coin analizi yap ⭐\n\n"
-                "📊 /stats - Başarı istatistiklerini göster ⭐\n\n"
-                "❌ /stop - Tüm takipleri durdur ⭐\n\n"
-                "⭐ /premium - Premium üyelik bilgilerini göster\n"
-                "🎁 /trial - 3 günlük deneme süresini başlat\n\n"
-                "❓ /help - Bu yardım menüsünü göster\n\n"
-                "⭐ işaretli komutlar premium üyelik gerektirir."
-            )
-        except Exception as e:
-            self.logger.error(f"Help komutu hatası: {e}")
+            "📈 *Analiz Komutları:*\n"
+            "/analysis - Detaylı teknik analiz gösterir\n"
+            "/chart - Teknik analiz grafiği oluşturur\n"
+            "/pattern - Fiyat formasyonları taraması yapar\n\n"
+            
+            "🧠 *Strateji Komutları:*\n"
+            "/vwap - VWAP bazlı alım-satım stratejisi için fırsat tarar\n"
+            "/rsi - RSI bazlı alım-satım stratejisi için fırsat tarar\n"
+            "/dca - Dollar Cost Average (TL maliyeti düşürme) stratejisi hesaplar\n\n"
+            
+            "ℹ️ *Bilgi Komutları:*\n"
+            "/price - Anlık fiyat bilgisi verir\n"
+            "/cap - Market hacmi ve sıralama bilgisi verir\n"
+            "/info - Coin hakkında temel bilgiler gösterir\n\n"
+            
+            "⚙️ *Özel Komutlar:*\n"
+            "/alert - Belirli bir fiyat seviyesi için alarm kurar\n"
+            "/settings - Bot ayarlarını değiştirir\n"
+            "/track - Bir coini takibe alır\n\n"
+            
+            "🆕 *Yeni Eklenen:*\n"
+            "/multiscan - Üç farklı zaman dilimi (haftalık, saatlik, 15dk) kullanarak en iyi alım fırsatlarını bulur\n"
+            "Örnek: /multiscan veya /multiscan BTCUSDT\n\n"
+            
+            "📱 *Nasıl Kullanılır:*\n"
+            "- Coin sembolünü USDT ile belirtin (örn: BTCUSDT)\n"
+            "- Ayrıntılı bilgi için bir komutu tek başına yazabilirsiniz\n"
+            "- Tüm komutlar ücretsiz olarak kullanılabilir\n"
+        )
+        
+        await update.message.reply_text(
+            help_text,
+            parse_mode='Markdown'
+        )
     
     @telegram_retry()
     async def cmd_chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -664,9 +769,8 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Analiz yapılırken bir hata oluştu: {str(e)}")
 
     @telegram_retry()
-    @premium_required
     async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Scan komutunu işle - Premium gerektirir"""
+        """Market taraması yapar"""
         try:
             chat_id = update.effective_chat.id
             
@@ -817,6 +921,17 @@ class TelegramBot:
                          "Ödeme için: @admin ile iletişime geçin."
                 )
                 
+            # Çoklu zaman dilimi analizi için callback işleyici
+            elif callback_data == "refresh_multi":
+                try:
+                    if self.multi_handler:
+                        await self.multi_handler.refresh_multi_callback(update, context)
+                    else:
+                        await update.callback_query.answer("Çoklu zaman dilimi modülü başlatılamadı!")
+                except Exception as e:
+                    self.logger.error(f"Çoklu zaman dilimi yenileme hatası: {e}")
+                    await update.callback_query.answer("Çoklu zaman dilimi yenileme hatası!")
+                
         except Exception as e:
             self.logger.error(f"Callback işleme hatası: {e}")
             try:
@@ -827,7 +942,6 @@ class TelegramBot:
                 pass
 
     @telegram_retry()
-    @premium_required
     async def track_button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE, index=None):
         """Takip butonuna tıklandığında çalışır - Premium gerektirir"""
         try:
@@ -1010,106 +1124,71 @@ class TelegramBot:
                 pass
 
     async def send_scan_results(self, chat_id, opportunities, scan_type):
-        """Tarama sonuçlarını gönder"""
+        """Tarama sonuçlarını gönderir."""
         try:
-            # Sonuçları formatla - Tüm tarama tipleri için aynı başlık ve açıklama
-            message = "📊 **4 SAATLİK TEKNİK ANALİZ SİNYALLERİ** 📊\n\n"
-            message += "📈 Bu sinyaller maksimum başarı için güçlü teknik analizle oluşturulmuştur.\n"
-            message += "💸 Destek-direnç noktaları, fiyat hareketleri ve mum formasyonları incelenerek belirlendi.\n"
-            message += "⏱️ Tahmini işlem süresi: 4 saat - 1 gün\n"
-            message += "⚠️ Her zaman kendi stop-loss ve kar-al seviyelerinizi belirleyin.\n\n"
-            
-            # Fırsatları ekle
-            for i, opportunity in enumerate(opportunities):
-                symbol = opportunity['symbol']
-                signal = opportunity.get('signal', 'N/A')
-                price = opportunity.get('current_price', opportunity.get('price', 0))
-                score = opportunity.get('opportunity_score', opportunity.get('score', 0))
-                
-                message += f"**{i+1}. {symbol}** - {signal}\n"
-                message += f"💰 Fiyat: {price:.6f}\n"
-                
-                if score:
-                    message += f"⭐ Puan: {score}/100\n"
-                
-                # Diğer bilgileri ekle (varsa)
-                for key, emoji in [
-                    ('success_probability', '✅'),
-                    ('entry_strategy', '📥'),
-                    ('exit_strategy', '📤'),
-                    ('risk_reward', '⚖️'),
-                    ('estimated_time', '⏱️'),
-                    ('rsi', '📊')
-                ]:
-                    if key in opportunity:
-                        message += f"{emoji} {key.replace('_', ' ').title()}: {opportunity[key]}\n"
-                
-                # Hedefler
-                if 'target1' in opportunity and 'target2' in opportunity:
-                    target1 = opportunity['target1']
-                    target2 = opportunity['target2']
-                    
-                    if 'LONG' in signal:
-                        t1_pct = ((target1 - price) / price) * 100
-                        t2_pct = ((target2 - price) / price) * 100
-                        message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} (%{t1_pct:.2f}) ➡️ {target2:.6f} (%{t2_pct:.2f})\n"
-                    else:
-                        t1_pct = ((price - target1) / price) * 100
-                        t2_pct = ((price - target2) / price) * 100
-                        message += f"🎯 Hedefler: {price:.6f} ➡️ {target1:.6f} (%{t1_pct:.2f}) ➡️ {target2:.6f} (%{t2_pct:.2f})\n"
-                
-                # Stop loss
-                if 'stop_price' in opportunity:
-                    stop = opportunity['stop_price']
-                    stop_pct = abs(((stop - price) / price) * 100)
-                    message += f"🛑 Stop: {stop:.6f} (%{stop_pct:.2f})\n"
-                
-                message += "\n"
-            
-            # Butonları oluştur
-            keyboard = []
-            row = []
-            for i, opportunity in enumerate(opportunities):
-                symbol = opportunity['symbol']
-                button_text = f"📊 {i+1}. {symbol} Takip Et"
-                callback_data = f"track_{i+1}"
-                
-                # Her satırda 2 buton olacak şekilde düzenle
-                if i % 2 == 0 and i > 0:
-                    keyboard.append(row)
-                    row = []
-                
-                row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
-            
-            # Son satırı ekle
-            if row:
-                keyboard.append(row)
-            
-            # Yenile butonu ekle
-            keyboard.append([InlineKeyboardButton("🔄 Taramayı Yenile", callback_data=f"refresh_{scan_type}")])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            # Kullanım ipuçları ekle
-            message += "💡 İPUÇLARI:\n"
-            message += "• Takip etmek istediğiniz coini seçin\n"
-            message += "• Takip sırasında 30 saniyede bir güncellemeler alacaksınız\n"
-            message += "• Takibi durdurmak için /stoptrack komutunu kullanın\n"
-            message += "• Yeni bir tarama için 'Taramayı Yenile' butonunu kullanın\n"
-            
+            if not opportunities:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Şu anda {scan_type} türünde işlem fırsatı bulunamadı!"
+                )
+                return
+
+            # Opportunities listesindeki anahtar adlarını kontrol et ve düzelt
+            if opportunities and scan_type != "scalp":
+                # Scan sonuçlarında 'current_price' yerine 'price' kullanılıyor olabilir
+                for opportunity in opportunities:
+                    if 'price' in opportunity and 'current_price' not in opportunity:
+                        opportunity['current_price'] = opportunity['price']
+
+            # Sonuçları formatla - tüm scan tipleri için _format_scalp_opportunities kullan
+            try:
+                message = self._format_scalp_opportunities(opportunities)
+            except KeyError as ke:
+                self.logger.error(f"Anahtar bulunamadı: {ke}")
+                # Basit formatlanmış mesaj oluştur
+                message = f"🔍 {scan_type.upper()} Tarama Sonuçları:\n\n"
+                for i, opp in enumerate(opportunities[:10], 1):
+                    symbol = opp.get('symbol', 'Bilinmeyen')
+                    score = opp.get('opportunity_score', opp.get('score', 0))
+                    message += f"{i}. {symbol} - Puan: {score:.1f}/100\n"
+        
             # Mesajı gönder
             await self.application.bot.send_message(
                 chat_id=chat_id,
                 text=message,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
+                parse_mode='HTML',
+                disable_web_page_preview=True
             )
             
+            # MarketAnalyzer için grafik oluşturma işlemini atla
+            # Sadece DualTimeframeAnalyzer (scalp) için grafik oluştur
+            if scan_type == "scalp" and opportunities and hasattr(self, 'dual_analyzer'):
+                top_opportunity = opportunities[0]
+                try:
+                    chart_buf = await self.dual_analyzer.generate_enhanced_scalp_chart(
+                        top_opportunity['symbol'], 
+                        top_opportunity
+                    )
+                    if chart_buf:
+                        await self.application.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=chart_buf,
+                            caption=f"📊 En Yüksek Puanlı Scalp Fırsatı: {top_opportunity['symbol']}"
+                        )
+                except AttributeError:
+                    # DualTimeframeAnalyzer'da metod bulunmuyorsa sessizce geç
+                    pass
+                except Exception as e:
+                    self.logger.error(f"Scalp grafik oluşturma hatası: {str(e)}")
+                
         except Exception as e:
-            self.logger.error(f"Tarama sonuçları gönderme hatası: {e}")
+            self.logger.error(f"Tarama sonuçları gönderilirken hata: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            
             await self.application.bot.send_message(
                 chat_id=chat_id,
-                text="❌ Tarama sonuçları gönderilirken bir hata oluştu!"
+                text=f"⚠️ Tarama sonuçları işlenirken bir hata oluştu. Lütfen daha sonra tekrar deneyin."
             )
 
     @telegram_retry()
@@ -1547,53 +1626,29 @@ class TelegramBot:
             self.logger.error(f"Akıllı takip görevi hatası ({symbol}): {e}")
 
     @telegram_retry()
-    @premium_required
     async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Premium bilgilerini göster"""
-        try:
-            user_id = update.effective_user.id
-            status = self.premium_manager.get_premium_status(user_id)
-            
-            # Premium bilgilerini göster
-            message = "⭐ **PREMIUM ÜYELİK BİLGİLERİ** ⭐\n\n"
-            
-            if status['is_premium']:
-                # Premium kullanıcı
-                days_left = (status['expiry_date'] - datetime.now()).days
-                hours_left = ((status['expiry_date'] - datetime.now()).seconds // 3600)
-                
-                message += f"✅ Premium üyeliğiniz aktif!\n"
-                message += f"📅 Bitiş Tarihi: {status['expiry_date'].strftime('%d.%m.%Y %H:%M')}\n"
-                message += f"⏱️ Kalan Süre: {days_left} gün {hours_left} saat\n\n"
-                
-                if status['subscription_type'] == 'trial':
-                    message += "🎁 Şu anda deneme sürümünü kullanıyorsunuz.\n"
-                    message += "💰 Deneme süreniz bittiğinde premium üyelik satın alabilirsiniz.\n"
-                else:
-                    message += "🌟 Premium üyeliğiniz için teşekkür ederiz!\n"
-            else:
-                # Premium olmayan kullanıcı
-                message += "❌ Premium üyeliğiniz bulunmamaktadır.\n\n"
-                
-                if not status['trial_used']:
-                    message += "🎁 3 günlük ücretsiz deneme sürenizi başlatmak için /trial komutunu kullanabilirsiniz.\n\n"
-                
-                message += "💰 Premium üyelik avantajları:\n"
-                message += "• Sınırsız coin takibi\n"
-                message += "• Gelişmiş tarama özellikleri\n"
-                message += "• Özel teknik analiz grafikleri\n"
-                message += "• Öncelikli destek\n\n"
-                
-                message += "📱 Premium üyelik için iletişim:\n"
-                message += "• Telegram: @YourTelegramUsername\n"
-                message += "• E-posta: your.email@example.com\n"
-            
-            await update.message.reply_text(message, parse_mode='Markdown')
-            
-        except Exception as e:
-            self.logger.error(f"Premium komutu hatası: {e}")
+        """Premium bilgilerini gösterir"""
+        user_id = update.effective_user.id
+        
+        # Premium manager'ı kontrol edelim
+        if hasattr(self, 'premium_manager'):
+            # Premium özelliği artık ücretsiz
             await update.message.reply_text(
-                "❌ Premium bilgileri gösterilirken bir hata oluştu!"
+                "🎉 *Premium Özellikler*\n\n"
+                "İyi haberler! Tüm premium özelliklerimiz şu anda ücretsiz olarak kullanılabilir.\n\n"
+                "✅ Sınırsız tarama ve analiz\n"
+                "✅ Gelişmiş teknik analiz grafikleri\n"
+                "✅ Çoklu zaman dilimi taraması\n"
+                "✅ Scalping fırsatları\n"
+                "✅ Ve daha fazlası...\n\n"
+                "Sorularınız için: @destek",
+                parse_mode='Markdown'
+            )
+        else:
+            # Premium manager yoksa
+            await update.message.reply_text(
+                "🎉 Tüm özelliklerimiz şu anda ücretsiz olarak kullanılabilir!",
+                parse_mode='Markdown'
             )
 
     @telegram_retry()
@@ -1662,6 +1717,281 @@ class TelegramBot:
             await update.message.reply_text(
                 "❌ Premium ekleme sırasında bir hata oluştu!"
             )
+
+    @telegram_retry()
+    async def cmd_scalp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Scalping fırsatları için tarama yapar"""
+        try:
+            chat_id = update.effective_chat.id
+            
+            # Parametreleri kontrol et
+            symbol = None
+            if context.args and len(context.args) > 0:
+                symbol = context.args[0].upper()
+                if not symbol.endswith('USDT'):
+                    symbol += 'USDT'
+            
+            # Başlama mesajı gönder
+            msg = await update.message.reply_text(
+                "🔍 Kısa vadeli ticaret fırsatları aranıyor...\n"
+                "Bu analiz 15 dakikalık ve 1 saatlik grafikleri birlikte kullanır.\n"
+                "⏳ Lütfen bekleyin..."
+            )
+            
+            # DualTimeframeAnalyzer oluştur
+            dual_analyzer = DualTimeframeAnalyzer(self.logger)
+            await dual_analyzer.initialize()
+            
+            # Tek coin analizi veya genel tarama
+            if symbol:
+                try:
+                    # DualTimeframeAnalyzer ile analiz yap
+                    analysis_result = await dual_analyzer.analyze_dual_timeframe(symbol)
+                    
+                    if not analysis_result:
+                        await msg.edit_text(f"❌ {symbol} için analiz yapılamadı! Sembolü kontrol edin veya daha sonra tekrar deneyin.")
+                        return
+                    
+                    # Sinyal metnini oluştur
+                    position = analysis_result['position']
+                    if 'STRONG_LONG' in position:
+                        signal_text = "🟢 GÜÇLÜ LONG"
+                    elif 'LONG' in position:
+                        signal_text = "🟢 LONG"
+                    elif 'STRONG_SHORT' in position:
+                        signal_text = "🔴 GÜÇLÜ SHORT"
+                    elif 'SHORT' in position:
+                        signal_text = "🔴 SHORT"
+                    else:
+                        signal_text = "⚪ BEKLE"
+                    
+                    # Sonuç formatı için gerekli verileri hazırla
+                    result = {
+                        'symbol': symbol,
+                        'current_price': analysis_result['current_price'],
+                        'volume': analysis_result['volume'],
+                        'signal': signal_text,
+                        'opportunity_score': analysis_result['opportunity_score'],
+                        'stop_price': analysis_result['stop_loss'],
+                        'target_price': analysis_result['take_profit'],
+                        'risk_reward': analysis_result['risk_reward'],
+                        'rsi_1h': analysis_result['rsi_1h'],
+                        'rsi': analysis_result['rsi_15m'],  # 15m RSI
+                        'macd': analysis_result['macd_15m'],
+                        'bb_position': analysis_result['bb_position_15m'],
+                        'ema20': analysis_result['ema20_1h'],
+                        'ema50': analysis_result['ema50_1h'],
+                        'reasons': analysis_result.get('reasons', [])
+                    }
+                    
+                    # Sonucu formatla ve gönder
+                    message = self._format_scalp_result(result)
+                    await msg.edit_text(message, parse_mode='Markdown')
+                    
+                    # Grafik gönder
+                    chart_buf = await self.analyzer.generate_chart(symbol, "15m")
+                    if chart_buf:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=chart_buf,
+                            caption=f"📊 {symbol} 15m Grafiği"
+                        )
+                except Exception as e:
+                    self.logger.error(f"Tek coin analiz hatası: {e}")
+                    await msg.edit_text(f"❌ {symbol} için analiz yapılırken hata oluştu: {str(e)}")
+                    return
+            else:
+                # Popüler coinleri analiz et
+                popular_coins = [
+                    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", 
+                    "ADAUSDT", "DOGEUSDT", "DOTUSDT", "AVAXUSDT", "LINKUSDT"
+                ]
+                
+                # Tarama işlemini başlat
+                opportunities = await dual_analyzer.scan_market(popular_coins)
+                
+                if not opportunities:
+                    await msg.edit_text(
+                        "❌ Şu anda kısa vadeli işlem fırsatı bulunamadı!\n"
+                        "Lütfen daha sonra tekrar deneyin veya belirli bir coin belirtin: /scalp BTCUSDT"
+                    )
+                    return
+                
+                # Sonuçları puanlarına göre sırala (zaten sıralanmış geliyor ama emin olmak için)
+                opportunities.sort(key=lambda x: x.get('opportunity_score', 0), reverse=True)
+                
+                # En iyi 5 fırsatı al
+                opportunities = opportunities[:5]
+                
+                # Kullanıcı dostu formata dönüştür
+                formatted_opportunities = []
+                for opp in opportunities:
+                    # Sinyal metnini oluştur
+                    position = opp['position']
+                    if 'STRONG_LONG' in position:
+                        signal_text = "🟢 GÜÇLÜ LONG"
+                    elif 'LONG' in position:
+                        signal_text = "🟢 LONG"
+                    elif 'STRONG_SHORT' in position:
+                        signal_text = "🔴 GÜÇLÜ SHORT"
+                    elif 'SHORT' in position:
+                        signal_text = "🔴 SHORT"
+                    else:
+                        signal_text = "⚪ BEKLE"
+                    
+                    formatted_opp = {
+                        'symbol': opp['symbol'],
+                        'current_price': opp['current_price'],
+                        'volume': opp['volume'],
+                        'signal': signal_text,
+                        'opportunity_score': opp['opportunity_score'],
+                        'stop_price': opp['stop_loss'],
+                        'target_price': opp['take_profit'],
+                        'risk_reward': opp['risk_reward']
+                    }
+                    formatted_opportunities.append(formatted_opp)
+                
+                # Sonuçları sakla
+                self.last_scan_results[chat_id] = formatted_opportunities
+                
+                # Sonuçları formatla ve gönder
+                message = self._format_scalp_opportunities(formatted_opportunities)
+                await msg.edit_text(message, parse_mode='Markdown')
+                
+                # En iyi fırsatın grafiğini gönder
+                if len(formatted_opportunities) > 0:
+                    top_symbol = formatted_opportunities[0]['symbol']
+                    chart_buf = await self.analyzer.generate_chart(top_symbol, "15m")
+                    if chart_buf:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=chart_buf,
+                            caption=f"📊 En iyi fırsat: {top_symbol} 15m Grafiği"
+                        )
+            
+        except Exception as e:
+            self.logger.error(f"Scalp komutu hatası: {e}")
+            await update.message.reply_text(
+                "❌ Analiz yapılırken bir hata oluştu. Lütfen daha sonra tekrar deneyin."
+            )
+
+    def _format_scalp_result(self, result: Dict) -> str:
+        """Scalp analiz sonucunu mesaja dönüştür"""
+        try:
+            symbol = result['symbol']
+            price = result['current_price']
+            signal = result.get('signal', '⚪ BEKLE')
+            score = result.get('opportunity_score', 0)
+            stop_price = result.get('stop_price', price * 0.95)
+            target_price = result.get('target_price', price * 1.05)
+            
+            # Risk/Ödül oranı
+            if 'LONG' in signal:
+                risk = price - stop_price
+                reward = target_price - price
+            else:
+                risk = stop_price - price
+                reward = price - target_price
+                
+            risk_reward = abs(reward / risk) if risk != 0 else 0
+            
+            message = (
+                f"💰 **{symbol} SCALP FIRSATI** 💰\n\n"
+                f"📊 **Analiz Tipi:** 15m/1h Dual Timeframe\n"
+                f"🎯 **Sinyal:** {signal}\n"
+                f"💵 **Fiyat:** ${price:.6f}\n"
+                f"⚡ **Güven:** %{score:.1f}\n\n"
+                
+                f"📈 **İŞLEM BİLGİLERİ:**\n"
+                f"• Giriş Fiyatı: ${price:.6f}\n"
+                f"• Stop-Loss: ${stop_price:.6f}\n"
+                f"• Take-Profit: ${target_price:.6f}\n"
+                f"• Risk/Ödül: {risk_reward:.2f}\n\n"
+                
+                f"📉 **TEKNİK GÖSTERGELER:**\n"
+                f"• RSI (15m): {result.get('rsi', 0):.1f}\n"
+                f"• RSI (1h): {result.get('rsi_1h', 0):.1f}\n"
+                f"• MACD: {result.get('macd', 0):.6f}\n"
+                f"• BB Pozisyonu: %{result.get('bb_position', 0):.1f}\n"
+                f"• EMA20: {result.get('ema20', 0):.6f}\n"
+                f"• EMA50: {result.get('ema50', 0):.6f}\n\n"
+            )
+            
+            # Analiz nedenleri varsa ekle
+            if 'reasons' in result and result['reasons']:
+                message += "🔍 **ANALİZ NEDENLERİ:**\n"
+                for reason in result['reasons'][:5]:  # En önemli 5 nedeni göster
+                    message += f"• {reason}\n"
+                message += "\n"
+            
+            # İpuçları
+            message += "💡 **İPUÇLARI:**\n"
+            if 'LONG' in signal or 'SHORT' in signal:
+                message += (
+                    "• Bu kısa vadeli işlem sinyalidir\n"
+                    "• Stop-loss seviyesine sadık kalın\n"
+                    "• Kârınız hedefin %70'ine ulaştığında stop'u başabaşa çekin\n"
+                )
+            else:
+                message += "• Şu anda net bir işlem sinyali yok, beklemede kalın\n"
+            
+            return message
+            
+        except Exception as e:
+            self.logger.error(f"Scalp sonuç formatlama hatası: {e}")
+            return "❌ Sonuç formatlanırken bir hata oluştu!"
+
+    def _format_scalp_opportunities(self, opportunities: List[Dict]) -> str:
+        """Scalp fırsatlarını mesaja dönüştür"""
+        try:
+            message = "🔥 **KISA VADELİ İŞLEM FIRSATLARI** 🔥\n\n"
+            message += "Bu analiz 15 dakikalık grafik verilerini kullanır.\n"
+            message += "Her fırsat 5-10$ kar potansiyeli için optimize edilmiştir.\n\n"
+            
+            message += "📊 **FIRSATLAR:**\n\n"
+            
+            for i, opp in enumerate(opportunities[:5], 1):
+                symbol = opp['symbol']
+                signal = opp.get('signal', '⚪ BEKLE')
+                price = opp['current_price']
+                score = opp.get('opportunity_score', 0)
+                stop_price = opp.get('stop_price', price * 0.95)
+                target_price = opp.get('target_price', price * 1.05)
+                
+                # Risk/Ödül hesapla
+                if 'LONG' in signal:
+                    risk = price - stop_price
+                    reward = target_price - price
+                else:
+                    risk = stop_price - price
+                    reward = price - target_price
+                    
+                risk_reward = abs(reward / risk) if risk != 0 else 0
+                
+                message += (
+                    f"{i}. {symbol} - {signal}\n"
+                    f"   💰 Fiyat: ${price:.6f}\n"
+                    f"   🛑 Stop: ${stop_price:.6f}\n"
+                    f"   🎯 Hedef: ${target_price:.6f}\n"
+                    f"   ⚖️ R/R: {risk_reward:.2f}\n"
+                    f"   ⭐ Puan: {score:.1f}/100\n\n"
+                )
+            
+            message += (
+                "📝 **KULLANIM:**\n"
+                "• Belirli bir coin hakkında daha detaylı bilgi için:\n"
+                "  `/scalp BTCUSDT`\n\n"
+                "⚠️ **RİSK UYARISI:**\n"
+                "• Bu sinyaller 15m grafik analizine dayanır\n"
+                "• Kısa vadeli işlemlerde her zaman stop-loss kullanın\n"
+                "• Yatırımınızın %1-2'sinden fazlasını riske atmayın\n"
+            )
+            
+            return message
+            
+        except Exception as e:
+            self.logger.error(f"Scalp fırsatları formatlama hatası: {e}")
+            return "❌ Sonuçlar formatlanırken bir hata oluştu!"
 
 if __name__ == '__main__':
     # Önceki bot instance'larını temizle

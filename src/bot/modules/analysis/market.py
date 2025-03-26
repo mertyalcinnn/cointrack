@@ -3,13 +3,20 @@ from .indicators import Indicators
 import numpy as np
 import ccxt.async_support as ccxt
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from datetime import datetime
 import asyncio
 import concurrent.futures
 import multiprocessing
 from functools import partial
 from .advanced_analysis import AdvancedAnalyzer, SignalStrength
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+from io import BytesIO
+import ta
+from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands
 
 class MarketAnalyzer:
     def __init__(self, logger):
@@ -1567,3 +1574,165 @@ class MarketAnalyzer:
         except Exception as e:
             self.logger.error(f"Sinyal üretme hatası: {e}")
             return "HATA" 
+
+    def calculate_advanced_stoploss(self, df: pd.DataFrame, current_price: float, position_type: str) -> Dict:
+        """Gelişmiş stop loss hesaplama"""
+        try:
+            # ATR hesapla
+            atr = self.calculate_atr(df)
+            volatility = self.calculate_volatility(df)
+            
+            # Stop loss çarpanı (volatiliteye göre ayarlanır)
+            sl_multiplier = 1.5 + (volatility * 0.5)
+            
+            # Stop loss ve take profit seviyeleri
+            if position_type == "LONG":
+                stop_loss = current_price - (atr * sl_multiplier)
+                take_profit = current_price + (atr * sl_multiplier * 2)  # 1:2 risk/ödül
+                trailing_activation = current_price + (atr * sl_multiplier)
+            else:  # SHORT
+                stop_loss = current_price + (atr * sl_multiplier)
+                take_profit = current_price - (atr * sl_multiplier * 2)
+                trailing_activation = current_price - (atr * sl_multiplier)
+            
+            # Risk yüzdesi
+            risk_percent = abs(current_price - stop_loss) / current_price * 100
+            
+            return {
+                'stoploss': float(stop_loss),
+                'take_profits': [float(take_profit)],
+                'trailing_activation': float(trailing_activation),
+                'trailing_step': float(atr * 0.3),
+                'risk_percent': float(risk_percent),
+                'atr': float(atr)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Stop loss hesaplama hatası: {e}")
+            return None 
+
+    async def generate_chart(self, symbol: str, timeframe: str = "4h") -> BytesIO:
+        """
+        Verilen sembol için teknik analiz grafiği oluşturur
+        """
+        try:
+            # OHLCV verilerini al
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
+            
+            if not ohlcv or len(ohlcv) < 20:
+                self.logger.error(f"{symbol} için yeterli veri bulunamadı")
+                return None
+                
+            # DataFrame oluştur
+            df = pd.DataFrame(
+                ohlcv,
+                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            )
+            
+            # Timestamp'i datetime'a çevir
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # Teknik indikatörleri hesapla
+            ema20 = EMAIndicator(close=df['close'], window=20)
+            ema50 = EMAIndicator(close=df['close'], window=50)
+            ema200 = EMAIndicator(close=df['close'], window=200)
+            df['EMA20'] = ema20.ema_indicator()
+            df['EMA50'] = ema50.ema_indicator()
+            df['EMA200'] = ema200.ema_indicator()
+            
+            # RSI
+            rsi = RSIIndicator(close=df['close'])
+            df['RSI'] = rsi.rsi()
+            
+            # Bollinger Bands
+            bb = BollingerBands(close=df['close'])
+            df['BB_UPPER'] = bb.bollinger_hband()
+            df['BB_MIDDLE'] = bb.bollinger_mavg()
+            df['BB_LOWER'] = bb.bollinger_lband()
+            
+            # MACD
+            exp1 = df['close'].ewm(span=12, adjust=False).mean()
+            exp2 = df['close'].ewm(span=26, adjust=False).mean()
+            df['MACD'] = exp1 - exp2
+            df['MACD_SIGNAL'] = df['MACD'].ewm(span=9, adjust=False).mean()
+            
+            # Grafik ayarları
+            mc = mpf.make_marketcolors(
+                up='green',
+                down='red',
+                edge='inherit',
+                wick='inherit',
+                volume='in',
+                ohlc='inherit'
+            )
+            
+            s = mpf.make_mpf_style(
+                marketcolors=mc,
+                gridstyle='dotted',
+                y_on_right=True
+            )
+            
+            # Grafik panellerini ayarla
+            fig = mpf.figure(figsize=(12, 8), style=s)
+            
+            # Panel boyutlarını ayarla (yükseklik oranları)
+            gs = fig.add_gridspec(6, 1)
+            
+            # Ana grafik paneli
+            ax1 = fig.add_subplot(gs[0:3, :])
+            # Hacim paneli
+            ax2 = fig.add_subplot(gs[3:5, :], sharex=ax1)
+            # RSI paneli
+            ax3 = fig.add_subplot(gs[5, :], sharex=ax1)
+            
+            # Ana mum grafiği
+            mpf.plot(
+                df,
+                type='candle',
+                style=s,
+                ax=ax1,
+                volume=ax2,  # Hacim grafiği için ax2'yi kullan
+                warn_too_much_data=10000
+            )
+            
+            # EMA'ları ekle
+            ax1.plot(df.index, df['EMA20'], label='EMA20', color='blue', alpha=0.7)
+            ax1.plot(df.index, df['EMA50'], label='EMA50', color='orange', alpha=0.7)
+            ax1.plot(df.index, df['EMA200'], label='EMA200', color='red', alpha=0.7)
+            
+            # Bollinger Bands
+            ax1.plot(df.index, df['BB_UPPER'], '--', label='BB Upper', color='gray', alpha=0.5)
+            ax1.plot(df.index, df['BB_MIDDLE'], '--', label='BB Middle', color='gray', alpha=0.5)
+            ax1.plot(df.index, df['BB_LOWER'], '--', label='BB Lower', color='gray', alpha=0.5)
+            
+            # RSI grafiği
+            ax3.plot(df.index, df['RSI'], label='RSI', color='purple')
+            ax3.axhline(y=70, color='r', linestyle='--', alpha=0.3)
+            ax3.axhline(y=30, color='g', linestyle='--', alpha=0.3)
+            ax3.fill_between(df.index, df['RSI'], 70, where=(df['RSI'] >= 70), color='red', alpha=0.3)
+            ax3.fill_between(df.index, df['RSI'], 30, where=(df['RSI'] <= 30), color='green', alpha=0.3)
+            
+            # Grafik başlığı ve etiketler
+            ax1.set_title(f'{symbol} {timeframe} Grafiği')
+            ax1.legend(loc='upper left')
+            ax2.set_ylabel('Hacim')
+            ax3.set_ylabel('RSI')
+            
+            # Y ekseni aralıklarını ayarla
+            ax3.set_ylim(0, 100)
+            
+            # Grafik düzenlemeleri
+            plt.tight_layout()
+            
+            # Grafiği BytesIO'ya kaydet
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            plt.close()
+            
+            return buf
+            
+        except Exception as e:
+            self.logger.error(f"Grafik oluşturma hatası ({symbol}): {e}")
+            return None
