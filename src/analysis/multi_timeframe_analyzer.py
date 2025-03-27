@@ -16,15 +16,6 @@ class MultiTimeframeAnalyzer:
     Üç farklı zaman dilimini (1W, 1H, 15M) kullanarak kapsamlı teknik analiz yapan sınıf.
     """
     
-    """
-    Multi Timeframe Analyzer modülü
-
-    Bu modül şunları yapar:
-    1. Haftalık grafikler için trend analizi
-    2. Saatlik grafikler için detaylandırma
-    3. Olumlu haftalık ve saatlik trende sahip coinler için 15dk analizi
-    """
-    
     def __init__(self, logger=None):
         """Initialize the analyzer with necessary components"""
         self.logger = logger or logging.getLogger('MultiTimeframeAnalyzer')
@@ -44,6 +35,9 @@ class MultiTimeframeAnalyzer:
         
         # Demo modu
         self.demo_mode = False
+        
+        # Cache ekle
+        self.data_cache = {}  # Basit bir önbellek sözlüğü
         
         self.logger.info("MultiTimeframeAnalyzer başlatıldı")
     
@@ -121,21 +115,20 @@ class MultiTimeframeAnalyzer:
             self.logger.error(f"Ticker verisi alma hatası ({symbol}): {str(e)}")
             return {}
     
-    async def scan_market(self, symbols=None, demo=True):
+    async def scan_market(self, symbols=None):
         """
         Dört zaman diliminde market taraması yapar (1W, 4H, 1H, 15m)
         
-        1. Haftalık (1W) trendin olumlu olduğu coinleri bulur
-        2. Olumlu haftalık trende sahip coinlerin 4 saatlik (4H) analizini yapar
-        3. Olumlu haftalık ve 4 saatlik trende sahip coinlerin saatlik (1H) analizini yapar
-        4. Tüm trenler olumlu olan coinler için 15dk analizi yapar
+        1. Haftalık (1W) trendin olumlu veya olumsuz olduğu coinleri bulur
+        2. Trendli coinlerin 4 saatlik (4H) analizini yapar 
+        3. İyi trend gösteren coinlerin saatlik (1H) analizini yapar
+        4. İyi fırsatlar gösteren coinler için 15dk analizi yapar
         
         Args:
             symbols (List[str], optional): Analiz edilecek sembol listesi. Default olarak popüler coinler.
-            demo (bool, optional): Demo mod aktifse bütün sembolleri analiz eder. Default True.
             
         Returns:
-            List[Dict]: Alım fırsatları listesi
+            List[Dict]: LONG ve SHORT fırsatları listesi
         """
         try:
             start_time = time.time()
@@ -147,219 +140,92 @@ class MultiTimeframeAnalyzer:
                 self.logger.info(f"{len(symbols)} sembol taramaya alındı")
             else:
                 self.logger.info(f"Belirtilen {len(symbols)} sembol taranıyor: {symbols}")
-                # Tek sembol analizi ise demo modu aç (filtreleme yapma)
-                if len(symbols) == 1:
-                    demo = True
             
             # 1. ADIM: HAFTALIK ANALİZ (1W)
             self.logger.info("1/4: Haftalık (1W) analiz başladı...")
+            weekly_analysis = await self.analyze_timeframe(symbols, "1w")
             
-            # ThreadPoolExecutor ile paralel işlem
-            weekly_results = []
+            # Belirgin trendleri filtrele - LONG ve SHORT için
+            trendli_weekly = [r for r in weekly_analysis if r['trend'] in [
+                'BULLISH', 'STRONGLY_BULLISH', 'BEARISH', 'STRONGLY_BEARISH'
+            ]]
+            self.logger.info(f"Haftalık analizde {len(trendli_weekly)} belirgin trend bulundu")
             
-            async def analyze_symbol_weekly(symbol):
-                try:
-                    weekly_df = await self.get_klines(symbol, timeframe='1w', limit=52)
-                    if weekly_df is None or len(weekly_df) < 26:
-                        return None
-                    
-                    # Göstergeleri hesapla
-                    indicators = self.calculate_indicators(weekly_df)
-                    if indicators is None:
-                        return None
-                    
-                    # Trend analizi yap
-                    trend, trend_strength = self.analyze_trend(weekly_df, indicators)
-                    
-                    # Sonuç döndür
-                    return {
-                        'symbol': symbol,
-                        'weekly_trend': trend,
-                        'weekly_trend_strength': trend_strength,
-                        'weekly_indicators': indicators,
-                        'weekly_price': weekly_df['close'].iloc[-1],
-                        'weekly_volume': weekly_df['volume'].iloc[-1],
-                        'opportunity_score': 0  # Başlangıçta 0
-                    }
-                except Exception as e:
-                    self.logger.error(f"Haftalık {symbol} analiz hatası: {str(e)}")
-                    return None
+            if len(trendli_weekly) == 0:
+                self.logger.warning("Haftalık analizde belirgin trend bulunamadı")
+                if len(weekly_analysis) > 0:
+                    # En azından birkaç sembol ekleyelim ki sonraki adımlarda çalışsın
+                    trendli_weekly = weekly_analysis[:5] if len(weekly_analysis) >= 5 else weekly_analysis
             
-            # Sembolleri paralel olarak analiz et
-            tasks = [analyze_symbol_weekly(symbol) for symbol in symbols]
-            results = await asyncio.gather(*tasks)
-            weekly_results = [r for r in results if r is not None]
-            
-            # Olumlu trendleri filtrele
-            if not demo:  # Demo mod değilse sadece olumlu trendleri seç
-                positive_weekly = [r for r in weekly_results if r['weekly_trend'] in ['BULLISH', 'STRONGLY_BULLISH']]
-                self.logger.info(f"Haftalık analizde {len(positive_weekly)} olumlu trend bulundu")
-            else:
-                positive_weekly = weekly_results
-                self.logger.info(f"Demo mod: Haftalık analizde tüm semboller kullanılıyor ({len(positive_weekly)})")
-            
-            if len(positive_weekly) == 0 and not demo:
-                self.logger.warning("Haftalık analizde olumlu trend bulunamadı")
-                # En azından birkaç sembol ekleyelim ki sonraki adımlarda çalışsın
-                positive_weekly = weekly_results[:5] if len(weekly_results) >= 5 else weekly_results
-            
-            # 2. ADIM: 4 SAATLİK ANALİZ (4H) - YENİ EKLENEN KISIM
+            # 2. ADIM: 4 SAATLİK ANALİZ (4H)
             self.logger.info("2/4: 4 Saatlik (4H) analiz başladı...")
-            filtered_symbols = [r['symbol'] for r in positive_weekly]
-            
-            async def analyze_symbol_4hour(symbol):
-                try:
-                    h4_df = await self.get_klines(symbol, timeframe='4h', limit=120)  # Son 20 gün
-                    if h4_df is None or len(h4_df) < 50:
-                        return None
-                    
-                    # Göstergeleri hesapla
-                    indicators = self.calculate_indicators(h4_df)
-                    if indicators is None:
-                        return None
-                    
-                    # Trend analizi yap
-                    trend, trend_strength = self.analyze_trend(h4_df, indicators)
-                    
-                    # Sonuç döndür
-                    return {
-                        'symbol': symbol,
-                        'h4_trend': trend,
-                        'h4_trend_strength': trend_strength,
-                        'h4_indicators': indicators,
-                        'h4_price': h4_df['close'].iloc[-1],
-                        'h4_volume': h4_df['volume'].iloc[-1]
-                    }
-                except Exception as e:
-                    self.logger.error(f"4 Saatlik {symbol} analiz hatası: {str(e)}")
-                    return None
-            
-            # Paralel olarak 4 saatlik analizleri yap
-            tasks = [analyze_symbol_4hour(symbol) for symbol in filtered_symbols]
-            results = await asyncio.gather(*tasks)
-            h4_results = [r for r in results if r is not None]
+            filtered_symbols = [r['symbol'] for r in trendli_weekly]
+            h4_analysis = await self.analyze_timeframe(filtered_symbols, "4h")
             
             # Haftalık ve 4 saatlik sonuçları birleştir
-            four_hour_combined = self._combine_weekly_and_4h_results(positive_weekly, h4_results)
+            combined_results = self._combine_timeframe_results(trendli_weekly, h4_analysis, "weekly", "h4")
             
             # İyi 4 saatlik fırsatları filtrele
-            if not demo:
-                positive_4h = [r for r in four_hour_combined if r.get('h4_trend') in ['BULLISH', 'STRONGLY_BULLISH']]
-                self.logger.info(f"4 Saatlik analizde {len(positive_4h)} olumlu trend bulundu")
-            else:
-                positive_4h = four_hour_combined
-                self.logger.info(f"Demo mod: 4 Saatlik analizde tüm semboller kullanılıyor ({len(positive_4h)})")
+            good_h4_results = []
+            for result in combined_results:
+                weekly_trend = result.get('weekly_trend', 'NEUTRAL')
+                h4_trend = result.get('h4_trend', 'NEUTRAL')
+                
+                # LONG veya SHORT eğilimi varsa ekle
+                if (weekly_trend in ['BULLISH', 'STRONGLY_BULLISH'] and 
+                    h4_trend in ['BULLISH', 'STRONGLY_BULLISH', 'NEUTRAL']) or \
+                   (weekly_trend in ['BEARISH', 'STRONGLY_BEARISH'] and 
+                    h4_trend in ['BEARISH', 'STRONGLY_BEARISH', 'NEUTRAL']):
+                    good_h4_results.append(result)
             
-            if len(positive_4h) == 0 and not demo:
-                self.logger.warning("4 Saatlik analizde olumlu trend bulunamadı")
-                positive_4h = four_hour_combined[:10] if len(four_hour_combined) >= 10 else four_hour_combined
+            self.logger.info(f"4 Saatlik analizde {len(good_h4_results)} uyumlu trend bulundu")
+            
+            if len(good_h4_results) == 0:
+                self.logger.warning("4 Saatlik analizde uyumlu trend bulunamadı")
+                good_h4_results = combined_results[:10] if len(combined_results) >= 10 else combined_results
             
             # 3. ADIM: SAATLİK ANALİZ (1H)
             self.logger.info("3/4: Saatlik (1H) analiz başladı...")
-            filtered_symbols = [r['symbol'] for r in positive_4h]
+            filtered_symbols = [r['symbol'] for r in good_h4_results]
+            hourly_analysis = await self.analyze_timeframe(filtered_symbols, "1h")
             
-            async def analyze_symbol_hourly(symbol):
-                try:
-                    hourly_df = await self.get_klines(symbol, timeframe='1h', limit=168)  # Son 7 gün
-                    if hourly_df is None or len(hourly_df) < 48:
-                        return None
-                    
-                    # Göstergeleri hesapla
-                    indicators = self.calculate_indicators(hourly_df)
-                    if indicators is None:
-                        return None
-                    
-                    # Trend analizi yap
-                    trend, trend_strength = self.analyze_trend(hourly_df, indicators)
-                    
-                    # Sonuç döndür
-                    return {
-                        'symbol': symbol,
-                        'hourly_trend': trend,
-                        'hourly_trend_strength': trend_strength,
-                        'hourly_indicators': indicators,
-                        'hourly_price': hourly_df['close'].iloc[-1],
-                        'hourly_volume': hourly_df['volume'].iloc[-1]
-                    }
-                except Exception as e:
-                    self.logger.error(f"Saatlik {symbol} analiz hatası: {str(e)}")
-                    return None
-            
-            # Paralel olarak saatlik analizleri yap
-            tasks = [analyze_symbol_hourly(symbol) for symbol in filtered_symbols]
-            results = await asyncio.gather(*tasks)
-            hourly_results = [r for r in results if r is not None]
-            
-            # Ön sonuçları birleştir - weekly, 4h ve hourly
-            preliminary_results = self._combine_preliminary_results(positive_4h, hourly_results)
+            # 4 saatlik ve saatlik sonuçları birleştir
+            combined_h1_results = self._combine_timeframe_results(good_h4_results, hourly_analysis, "h4", "hourly")
             
             # En iyi fırsatları seç
-            if not demo:  # Demo mod değilse puanı yüksek olanları filtrele
-                good_opportunities = [r for r in preliminary_results if r.get('opportunity_score', 0) >= 40]
-                self.logger.info(f"Haftalık+4Saatlik+Saatlik analizde {len(good_opportunities)} iyi fırsat bulundu")
-            else:
-                good_opportunities = preliminary_results
-                self.logger.info(f"Demo mod: Tüm ön sonuçlar kullanılıyor ({len(good_opportunities)})")
+            good_opportunities = [r for r in combined_h1_results if r.get('opportunity_score', 0) >= 30]
+            self.logger.info(f"Saatlik analizde {len(good_opportunities)} iyi fırsat bulundu")
             
             if len(good_opportunities) == 0:
-                self.logger.warning("Tüm zaman dilimlerinde uygun fırsat bulunamadı")
-                # Birkaç sembol ekleyelim
-                good_opportunities = preliminary_results[:10] if len(preliminary_results) >= 10 else preliminary_results
+                self.logger.warning("Saatlik analizde iyi fırsat bulunamadı")
+                good_opportunities = combined_h1_results[:10] if len(combined_h1_results) >= 10 else combined_h1_results
             
             # 4. ADIM: 15 DAKİKALIK ANALİZ (15m)
             self.logger.info("4/4: 15 dakikalık (15m) analiz başladı...")
-            final_symbols = [r['symbol'] for r in good_opportunities]
-            
-            async def analyze_symbol_15min(symbol):
-                try:
-                    df_15m = await self.get_klines(symbol, timeframe='15m', limit=200)
-                    if df_15m is None or len(df_15m) < 48:
-                        return None
-                    
-                    # Göstergeleri hesapla
-                    indicators = self.calculate_indicators(df_15m)
-                    if indicators is None:
-                        return None
-                    
-                    # Trend analizi yap
-                    trend, trend_strength = self.analyze_trend(df_15m, indicators)
-                    
-                    # Stop/Target hesapla
-                    current_price = df_15m['close'].iloc[-1]
-                    stop_price, target_price = self.calculate_stop_and_target(df_15m, trend, current_price)
-                    
-                    # Risk/Ödül oranını hesapla
-                    risk = abs(current_price - stop_price) if stop_price > 0 else 1
-                    reward = abs(target_price - current_price) if target_price > 0 else 0
-                    risk_reward = reward / risk if risk > 0 else 0
-                    
-                    # Sinyal belirle
-                    signal = "🟩 LONG" if trend in ['BULLISH', 'STRONGLY_BULLISH'] else "🔴 SHORT" if trend in ['BEARISH', 'STRONGLY_BEARISH'] else "⚪ BEKLE"
-                    
-                    # Sonuç döndür
-                    return {
-                        'symbol': symbol,
-                        'signal': signal,
-                        '15m_trend': trend,
-                        '15m_trend_strength': trend_strength,
-                        '15m_indicators': indicators,
-                        'current_price': current_price,
-                        'stop_price': stop_price,
-                        'target_price': target_price,
-                        'risk_reward': risk_reward,
-                        'trend_descriptions': indicators.get('trend_messages', [])[:3] if indicators else []
-                    }
-                except Exception as e:
-                    self.logger.error(f"15dk {symbol} analiz hatası: {str(e)}")
-                    return None
-            
-            # Paralel olarak 15dk analizleri yap
-            tasks = [analyze_symbol_15min(symbol) for symbol in final_symbols]
-            results = await asyncio.gather(*tasks)
-            m15_results = [r for r in results if r is not None]
+            filtered_symbols = [r['symbol'] for r in good_opportunities]
+            m15_analysis = await self.analyze_timeframe(filtered_symbols, "15m")
             
             # Tüm sonuçları birleştir
-            final_results = self._combine_final_results(good_opportunities, m15_results)
+            final_results = self._combine_timeframe_results(good_opportunities, m15_analysis, "hourly", "15m")
+            
+            # Sinyal atama - DÜZELTME
+            for result in final_results:
+                weekly_trend = result.get('weekly_trend', 'NEUTRAL')
+                h4_trend = result.get('h4_trend', 'NEUTRAL')
+                hourly_trend = result.get('hourly_trend', 'NEUTRAL')
+                m15_trend = result.get('15m_trend', 'NEUTRAL')
+                
+                # LONG için - STRONGLY_BULLISH veya BULLISH olması yeterli
+                if m15_trend in ['STRONGLY_BULLISH', 'BULLISH'] or weekly_trend in ['STRONGLY_BULLISH', 'BULLISH']:
+                    result['signal'] = "🟩 LONG"
+                    result['trade_direction'] = "LONG"
+                # SHORT için - STRONGLY_BEARISH veya BEARISH olması yeterli
+                elif m15_trend in ['STRONGLY_BEARISH', 'BEARISH'] or weekly_trend in ['STRONGLY_BEARISH', 'BEARISH']:
+                    result['signal'] = "🔴 SHORT"
+                    result['trade_direction'] = "SHORT"
+                else:
+                    result['signal'] = "⚪ BEKLE"
+                    result['trade_direction'] = "NEUTRAL"
             
             # Sonuçları fırsat puanına göre sırala
             final_results.sort(key=lambda x: x.get('opportunity_score', 0), reverse=True)
@@ -376,773 +242,319 @@ class MultiTimeframeAnalyzer:
             return []
 
     async def analyze_timeframe(self, symbols: List[str], timeframe: str) -> List[Dict]:
-        """Belirli bir zaman dilimi için sembolleri analiz et"""
-        analysis_results = []
+        """
+        Belirli bir zaman dilimi için sembol listesini analiz eder
         
-        # Her sembol için analiz yap
-        for symbol in symbols:
-            try:
-                # Kline verilerini al
-                df = await self.get_klines(symbol, timeframe, limit=100)
-                
-                if df.empty:
-                    self.logger.warning(f"Boş kline verisi ({symbol}, {timeframe}), atlıyor...")
-                    continue
-                
-                # Ticker verilerini al
-                ticker = await self.get_ticker(symbol)
-                
-                # Ticker bilgisi yoksa veya df boşsa devam et
-                if not ticker or df.empty:
-                    self.logger.warning(f"Ticker bilgisi yok ({symbol}), atlıyor...")
-                    continue
-                
-                # Temel fiyat bilgileri - None kontrolü ekle
-                current_price = ticker.get('last', df['close'].iloc[-1])
-                if current_price is None:
-                    current_price = df['close'].iloc[-1]  # Ticker'da fiyat yoksa son kapanışı kullan
-                
-                volume = ticker.get('quoteVolume', df['volume'].sum())
-                if volume is None:
-                    volume = df['volume'].sum()  # Ticker'da hacim yoksa toplam hacmi kullan
-                
-                # Teknik göstergeleri hesapla
-                indicators = self.calculate_indicators(df)
-                
-                # Eğer indicators None ise devam et
-                if indicators is None:
-                    self.logger.warning(f"Göstergeler hesaplanamadı ({symbol}, {timeframe}), atlıyor...")
-                    continue
-                
-                # Trend analizini yap
-                trend, trend_strength = self.analyze_trend(df, indicators)
-                
-                # Stop-loss ve hedef fiyatları belirle
-                stop_loss, take_profit = self.calculate_stop_and_target(df, trend, current_price)
-                
-                # Risk/Ödül oranını hesapla - sıfıra bölünmeyi önle
-                risk = abs(current_price - stop_loss)
-                reward = abs(take_profit - current_price)
-                risk_reward = reward / risk if risk > 0 else 0
-                
-                # Sonuçları ekle
-                result = {
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "current_price": current_price,
-                    "volume": volume,
-                    "trend": trend,
-                    "trend_strength": trend_strength,
-                    "indicators": indicators,
-                    "stop_price": stop_loss,
-                    "target_price": take_profit,
-                    "risk_reward": risk_reward
-                }
-                
-                analysis_results.append(result)
-                
-            except Exception as e:
-                self.logger.error(f"Analiz hatası ({symbol}, {timeframe}): {str(e)}")
-                continue
+        Args:
+            symbols: Analiz edilecek sembol listesi
+            timeframe: Analiz edilecek zaman dilimi (1w, 4h, 1h, 15m)
+            
+        Returns:
+            List[Dict]: Analiz sonuçları listesi
+        """
+        try:
+            self.logger.info(f"{timeframe} zaman dilimi için {len(symbols)} sembol analiz ediliyor...")
+            results = []
+            
+            # Her sembol için paralel analiz
+            async def analyze_single_symbol(symbol):
+                try:
+                    # Tarihi veriyi al
+                    df = await self.get_klines(symbol, timeframe=timeframe, limit=200)
+                    if df is None or len(df) < 30:  # En az 30 mum gerekli
+                        return None
+                    
+                    # Göstergeleri hesapla
+                    indicators = self.calculate_indicators(df)
+                    if indicators is None:
+                        return None
+                    
+                    # Trend analizi yap
+                    trend, trend_strength = self.analyze_trend(df, indicators)
+                    
+                    # Stop/Target hesapla
+                    current_price = df['close'].iloc[-1]
+                    stop_price, target_price = 0, 0
+                    risk_reward = 0
+                    
+                    if trend in ['BULLISH', 'STRONGLY_BULLISH', 'BEARISH', 'STRONGLY_BEARISH']:
+                        direction = "LONG" if trend in ['BULLISH', 'STRONGLY_BULLISH'] else "SHORT"
+                        stop_price, target_price = self.calculate_stop_and_target(df, trend, current_price, direction=direction)
+                        
+                        # Risk/Ödül oranını hesapla
+                        if direction == "LONG":
+                            risk = current_price - stop_price if stop_price > 0 else 1
+                            reward = target_price - current_price if target_price > 0 else 0
+                        else:
+                            risk = stop_price - current_price if stop_price > 0 else 1
+                            reward = current_price - target_price if target_price > 0 else 0
+                        
+                        risk_reward = reward / risk if risk > 0 else 0
+                    
+                    # Analiz sonucunu döndür
+                    return {
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'trend': trend,
+                        'trend_strength': trend_strength,
+                        'indicators': indicators,
+                        'current_price': current_price,
+                        'volume': df['volume'].iloc[-1],
+                        'stop_price': stop_price,
+                        'target_price': target_price,
+                        'risk_reward': risk_reward,
+                        'trend_descriptions': indicators.get('trend_messages', [])[:3] if indicators else []
+                    }
+                except Exception as e:
+                    self.logger.error(f"{timeframe} - {symbol} analiz hatası: {str(e)}")
+                    return None
+            
+            # Sembolleri paralel olarak analiz et
+            tasks = [analyze_single_symbol(symbol) for symbol in symbols]
+            results_with_none = await asyncio.gather(*tasks)
+            
+            # None sonuçları filtrele
+            results = [r for r in results_with_none if r is not None]
+            
+            self.logger.info(f"{timeframe} zaman dilimi için {len(results)} başarılı analiz tamamlandı")
+            return results
         
-        return analysis_results
-    
+        except Exception as e:
+            self.logger.error(f"{timeframe} zaman dilimi analiz hatası: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return []
+
     def calculate_indicators(self, df: pd.DataFrame) -> Dict:
-        """Gelişmiş teknik göstergeler hesapla"""
-        try:
-            # Veri kontrolü
-            if df.empty or len(df) < 30:  # En az 30 mum gerekli
-                self.logger.warning("Gösterge hesaplama için yeterli veri yok")
-                return None
-            
-            # Temel göstergeler
-            indicators = {}
-            
-            # RSI (Göreli Güç Endeksi)
-            close_diff = df['close'].diff().fillna(0)
-            gain = close_diff.where(close_diff > 0, 0)
-            loss = -close_diff.where(close_diff < 0, 0)
-            
-            avg_gain = gain.rolling(window=self.rsi_period).mean().fillna(0)
-            avg_loss = loss.rolling(window=self.rsi_period).mean().fillna(0)
-            
-            # İlk değer için ayrı hesaplama
-            if len(df) >= self.rsi_period + 1:
-                first_avg_gain = gain.iloc[1:self.rsi_period+1].mean()
-                first_avg_loss = loss.iloc[1:self.rsi_period+1].mean()
-                
-                avg_gain.iloc[self.rsi_period] = first_avg_gain
-                avg_loss.iloc[self.rsi_period] = first_avg_loss
-                
-                # Takip eden değerler için Wilder'ın düzgünleştirme formülü
-                for i in range(self.rsi_period + 1, len(df)):
-                    avg_gain.iloc[i] = (avg_gain.iloc[i-1] * (self.rsi_period - 1) + gain.iloc[i]) / self.rsi_period
-                    avg_loss.iloc[i] = (avg_loss.iloc[i-1] * (self.rsi_period - 1) + loss.iloc[i]) / self.rsi_period
-            
-            # Sıfıra bölünme kontrolü
-            rs = avg_gain / avg_loss.replace(0, 1e-9)
-            rsi = 100 - (100 / (1 + rs))
-            
-            indicators['rsi'] = float(rsi.iloc[-1])
-            
-            # RSI eğilimi (son 5 dönem boyunca yükseliyor mu, düşüyor mu?)
-            if len(rsi) >= 5:
-                rsi_slope = np.polyfit(range(5), rsi.iloc[-5:].values, 1)[0]
-                indicators['rsi_trend'] = 'RISING' if rsi_slope > 0 else 'FALLING'
-            else:
-                indicators['rsi_trend'] = 'NEUTRAL'
-            
-            # MACD (Hareketli Ortalama Yakınsama/Iraksama)
-            ema12 = df['close'].ewm(span=12, adjust=False).mean()
-            ema26 = df['close'].ewm(span=26, adjust=False).mean()
-            macd_line = ema12 - ema26
-            signal_line = macd_line.ewm(span=9, adjust=False).mean()
-            histogram = macd_line - signal_line
-            
-            indicators['macd'] = float(macd_line.iloc[-1])
-            indicators['macd_signal'] = float(signal_line.iloc[-1])
-            indicators['macd_hist'] = float(histogram.iloc[-1])
-            
-            # MACD çizgisinin eğilimi
-            if len(macd_line) >= 5:
-                macd_slope = np.polyfit(range(5), macd_line.iloc[-5:].values, 1)[0]
-                indicators['macd_trend'] = 'RISING' if macd_slope > 0 else 'FALLING'
-            else:
-                indicators['macd_trend'] = 'NEUTRAL'
-            
-            # MACD histogramı eğilimi (ivme)
-            if len(histogram) >= 5:
-                hist_values = histogram.iloc[-5:].values
-                hist_diff = np.diff(hist_values)
-                hist_trend = 'RISING' if np.sum(hist_diff > 0) >= 3 else 'FALLING'
-                indicators['macd_hist_trend'] = hist_trend
-            else:
-                indicators['macd_hist_trend'] = 'NEUTRAL'
-            
-            # Bollinger Bantları
-            typical_price = (df['high'] + df['low'] + df['close']) / 3
-            sma20 = typical_price.rolling(window=20).mean()
-            std20 = typical_price.rolling(window=20).std()
-            
-            bb_upper = sma20 + (2 * std20)
-            bb_lower = sma20 - (2 * std20)
-            
-            indicators['bb_upper'] = float(bb_upper.iloc[-1])
-            indicators['bb_middle'] = float(sma20.iloc[-1])
-            indicators['bb_lower'] = float(bb_lower.iloc[-1])
-            
-            # BB genişliği (volatilite göstergesi)
-            bb_width = (bb_upper - bb_lower) / sma20
-            indicators['bb_width'] = float(bb_width.iloc[-1])
-            
-            # BB'nin daralıp genişleme durumu
-            if len(bb_width) >= 5:
-                width_slope = np.polyfit(range(5), bb_width.iloc[-5:].values, 1)[0]
-                indicators['bb_width_trend'] = 'EXPANDING' if width_slope > 0 else 'CONTRACTING'
-            else:
-                indicators['bb_width_trend'] = 'NEUTRAL'
-            
-            # BB'da fiyat pozisyonu
-            last_close = df['close'].iloc[-1]
-            pct_b = (last_close - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1] + 1e-9)
-            indicators['bb_position'] = float(pct_b * 100)
-            
-            # EMA Hesaplamaları
-            emas = {}
-            for period in self.ema_periods:
-                ema_value = df['close'].ewm(span=period, adjust=False).mean().iloc[-1]
-                emas[f'ema{period}'] = float(ema_value)
-            
-            indicators['emas'] = emas
-            
-            # EMA çapraz geçişleri
-            indicators['ema_cross'] = {}
-            
-            # EMA9 ve EMA20 çapraz geçişi
-            if 'ema9' in emas and 'ema20' in emas:
-                ema9_values = df['close'].ewm(span=9, adjust=False).mean()
-                ema20_values = df['close'].ewm(span=20, adjust=False).mean()
-                
-                if ema9_values.iloc[-1] > ema20_values.iloc[-1] and ema9_values.iloc[-2] <= ema20_values.iloc[-2]:
-                    indicators['ema_cross']['9_20'] = 'GOLDEN_CROSS'
-                elif ema9_values.iloc[-1] < ema20_values.iloc[-1] and ema9_values.iloc[-2] >= ema20_values.iloc[-2]:
-                    indicators['ema_cross']['9_20'] = 'DEATH_CROSS'
-                else:
-                    indicators['ema_cross']['9_20'] = 'NONE'
-            
-            # EMA20 ve EMA50 çapraz geçişi
-            if 'ema20' in emas and 'ema50' in emas:
-                ema20_values = df['close'].ewm(span=20, adjust=False).mean()
-                ema50_values = df['close'].ewm(span=50, adjust=False).mean()
-                
-                if ema20_values.iloc[-1] > ema50_values.iloc[-1] and ema20_values.iloc[-2] <= ema50_values.iloc[-2]:
-                    indicators['ema_cross']['20_50'] = 'GOLDEN_CROSS'
-                elif ema20_values.iloc[-1] < ema50_values.iloc[-1] and ema20_values.iloc[-2] >= ema50_values.iloc[-2]:
-                    indicators['ema_cross']['20_50'] = 'DEATH_CROSS'
-                else:
-                    indicators['ema_cross']['20_50'] = 'NONE'
-            
-            # Hacim analizi
-            current_volume = df['volume'].iloc[-1]
-            volume_sma20 = df['volume'].rolling(window=20).mean().iloc[-1]
-            
-            indicators['volume'] = float(current_volume)
-            indicators['volume_sma20'] = float(volume_sma20)
-            indicators['volume_change'] = float(((current_volume - volume_sma20) / (volume_sma20 + 1e-9)) * 100)
-            
-            # Hacim trendi (son 5 dönemde)
-            if len(df) >= 5:
-                volume_trend = np.polyfit(range(5), df['volume'].iloc[-5:].values, 1)[0]
-                indicators['volume_trend'] = 'RISING' if volume_trend > 0 else 'FALLING'
-            else:
-                indicators['volume_trend'] = 'NEUTRAL'
-            
-            # Fiyat Aksiyonu Analizi
-            # Son 3 mumun yükseliş/düşüş durumu
-            if len(df) >= 3:
-                last_candles = df.iloc[-3:]
-                bullish_candles = sum(1 for i in range(len(last_candles)) if last_candles['close'].iloc[i] > last_candles['open'].iloc[i])
-                bearish_candles = sum(1 for i in range(len(last_candles)) if last_candles['close'].iloc[i] < last_candles['open'].iloc[i])
-                
-                indicators['price_action'] = 'BULLISH' if bullish_candles > bearish_candles else 'BEARISH' if bearish_candles > bullish_candles else 'NEUTRAL'
-            else:
-                indicators['price_action'] = 'NEUTRAL'
-                
-            # Momentum hesaplama (Rate of Change)
-            if len(df) >= 10:
-                roc = ((df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]) * 100
-                indicators['roc'] = float(roc)
-                indicators['momentum'] = 'STRONG_BULLISH' if roc > 5 else 'BULLISH' if roc > 2 else 'BEARISH' if roc < -2 else 'STRONG_BEARISH' if roc < -5 else 'NEUTRAL'
-            else:
-                indicators['roc'] = 0
-                indicators['momentum'] = 'NEUTRAL'
-            
-            return indicators
-            
-        except Exception as e:
-            self.logger.error(f"Gösterge hesaplama hatası: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return None
-
-
-    def analyze_trend(self, df: pd.DataFrame, indicators: Dict) -> Tuple[str, float]:
-        """Gelişmiş trend analizi ve trend gücü hesaplama"""
-        try:
-            # Tüm göstergeleri değerlendir
-            trend_factors = {}
-            trend_messages = []
-            
-            # RSI bazlı trend analizi
-            rsi = indicators["rsi"]
-            if rsi > 70:
-                trend_factors["rsi"] = -1  # Aşırı alım (bearish)
-                trend_messages.append("RSI aşırı alım bölgesinde (>70)")
-            elif rsi < 30:
-                trend_factors["rsi"] = 1   # Aşırı satım (bullish)
-                trend_messages.append("RSI aşırı satım bölgesinde (<30)")
-            elif rsi > 55:
-                trend_factors["rsi"] = 0.5  # Bullish eğilim
-                trend_messages.append("RSI yükseliş bölgesinde (>55)")
-            elif rsi < 45:
-                trend_factors["rsi"] = -0.5  # Bearish eğilim
-                trend_messages.append("RSI düşüş bölgesinde (<45)")
-            else:
-                trend_factors["rsi"] = 0  # Nötr
-            
-            # RSI trendi de değerlendir
-            if indicators.get("rsi_trend") == "RISING" and rsi < 70:
-                trend_factors["rsi_trend"] = 0.5
-                trend_messages.append("RSI yükseliş trendinde")
-            elif indicators.get("rsi_trend") == "FALLING" and rsi > 30:
-                trend_factors["rsi_trend"] = -0.5
-                trend_messages.append("RSI düşüş trendinde")
-            else:
-                trend_factors["rsi_trend"] = 0
-            
-            # MACD bazlı trend analizi
-            macd = indicators["macd"]
-            macd_signal = indicators["macd_signal"]
-            macd_hist = indicators["macd_hist"]
-            
-            if macd > macd_signal and macd_hist > 0:
-                trend_factors["macd"] = 1  # Güçlü yükseliş sinyali
-                trend_messages.append("MACD yükseliş sinyali veriyor")
-            elif macd < macd_signal and macd_hist < 0:
-                trend_factors["macd"] = -1  # Güçlü düşüş sinyali
-                trend_messages.append("MACD düşüş sinyali veriyor")
-            elif macd > macd_signal:
-                trend_factors["macd"] = 0.5  # Yükseliş sinyali
-                trend_messages.append("MACD çizgisi sinyal çizgisinin üzerinde")
-            elif macd < macd_signal:
-                trend_factors["macd"] = -0.5  # Düşüş sinyali
-                trend_messages.append("MACD çizgisi sinyal çizgisinin altında")
-            else:
-                trend_factors["macd"] = 0
-            
-            # MACD histogram trendi
-            if indicators.get("macd_hist_trend") == "RISING":
-                trend_factors["macd_hist"] = 0.5
-                trend_messages.append("MACD histogramı yükseliyor (momentum artıyor)")
-            elif indicators.get("macd_hist_trend") == "FALLING":
-                trend_factors["macd_hist"] = -0.5
-                trend_messages.append("MACD histogramı düşüyor (momentum azalıyor)")
-            else:
-                trend_factors["macd_hist"] = 0
-            
-            # EMA bazlı trend analizi - daha kapsamlı
-            emas = indicators["emas"]
-            close = df['close'].iloc[-1]
-            
-            ema9 = emas.get("ema9", 0)
-            ema20 = emas.get("ema20", 0)
-            ema50 = emas.get("ema50", 0)
-            ema200 = emas.get("ema200", 0) if "ema200" in emas else None
-            
-            # EMA setlerinin sıralaması
-            ema_trend = 0
-            ema_messages = []
-            
-            # Fiyat tüm EMA'ların üzerinde mi (güçlü yükseliş)
-            if ema200 is not None and close > ema9 > ema20 > ema50 > ema200:
-                ema_trend += 2
-                ema_messages.append("Fiyat tüm EMA'ların üzerinde (çok güçlü yükseliş)")
-            elif close > ema9 > ema20 > ema50:
-                ema_trend += 1.5
-                ema_messages.append("Fiyat tüm kısa ve orta vadeli EMA'ların üzerinde (güçlü yükseliş)")
-            
-            # Fiyat tüm EMA'ların altında mı (güçlü düşüş)
-            elif ema200 is not None and close < ema9 < ema20 < ema50 < ema200:
-                ema_trend -= 2
-                ema_messages.append("Fiyat tüm EMA'ların altında (çok güçlü düşüş)")
-            elif close < ema9 < ema20 < ema50:
-                ema_trend -= 1.5
-                ema_messages.append("Fiyat tüm kısa ve orta vadeli EMA'ların altında (güçlü düşüş)")
-            
-            # Pozitif çapraz geçişler
-            elif ema9 > ema20 > ema50 and close > ema9:
-                ema_trend += 1
-                ema_messages.append("Altın çapraz formasyon (EMA9 > EMA20 > EMA50)")
-            elif close > ema20 > ema50:
-                ema_trend += 0.8
-                ema_messages.append("Fiyat orta vadeli EMA'ların üzerinde")
-            elif close > ema50:
-                ema_trend += 0.5
-                ema_messages.append("Fiyat EMA50'nin üzerinde")
-            
-            # Negatif çapraz geçişler
-            elif ema9 < ema20 < ema50 and close < ema9:
-                ema_trend -= 1
-                ema_messages.append("Ölüm çaprazı formasyon (EMA9 < EMA20 < EMA50)")
-            elif close < ema20 < ema50:
-                ema_trend -= 0.8
-                ema_messages.append("Fiyat orta vadeli EMA'ların altında")
-            elif close < ema50:
-                ema_trend -= 0.5
-                ema_messages.append("Fiyat EMA50'nin altında")
-            
-            # EMA çapraz geçiş sinyalleri
-            ema_cross = indicators.get("ema_cross", {})
-            if ema_cross.get("9_20") == "GOLDEN_CROSS":
-                ema_trend += 0.5
-                ema_messages.append("Yeni altın çapraz (EMA9 > EMA20)")
-            elif ema_cross.get("9_20") == "DEATH_CROSS":
-                ema_trend -= 0.5
-                ema_messages.append("Yeni ölüm çaprazı (EMA9 < EMA20)")
-            
-            if ema_cross.get("20_50") == "GOLDEN_CROSS":
-                ema_trend += 0.7
-                ema_messages.append("Güçlü altın çapraz (EMA20 > EMA50)")
-            elif ema_cross.get("20_50") == "DEATH_CROSS":
-                ema_trend -= 0.7
-                ema_messages.append("Güçlü ölüm çaprazı (EMA20 < EMA50)")
-            
-            # En önemli EMA mesajını ekle
-            if ema_messages:
-                trend_messages.append(ema_messages[0])
-            
-            trend_factors["ema"] = ema_trend
-            
-            # Bollinger Bands bazlı trend
-            bb_position = indicators["bb_position"]
-            bb_width_trend = indicators.get("bb_width_trend", "NEUTRAL")
-            
-            if bb_position > 90:
-                trend_factors["bb"] = -1  # Aşırı alım ve olası geri çekilme
-                trend_messages.append("Fiyat üst BB bandının üstünde (aşırı alım)")
-            elif bb_position < 10:
-                trend_factors["bb"] = 1  # Aşırı satım ve olası yükseliş
-                trend_messages.append("Fiyat alt BB bandının altında (aşırı satım)")
-            elif bb_position > 80:
-                trend_factors["bb"] = -0.5  # Üst banda yakın
-                trend_messages.append("Fiyat üst BB bandına yakın")
-            elif bb_position < 20:
-                trend_factors["bb"] = 0.5  # Alt banda yakın
-                trend_messages.append("Fiyat alt BB bandına yakın")
-            else:
-                trend_factors["bb"] = 0  # Bantların ortasında
-            
-            # Bantlar daralıyorsa (düşük volatilite, olası breakout)
-            if bb_width_trend == "CONTRACTING":
-                trend_factors["bb_width"] = 0.2  # Hafif pozitif etki
-                trend_messages.append("BB bantları daralıyor (olası breakout)")
-            elif bb_width_trend == "EXPANDING":
-                trend_factors["bb_width"] = 0.1  # Çok hafif pozitif etki
-                trend_messages.append("BB bantları genişliyor (volatilite artıyor)")
-            else:
-                trend_factors["bb_width"] = 0
-            
-            # Fiyat Aksiyonu
-            price_action = indicators.get("price_action", "NEUTRAL")
-            if price_action == "BULLISH":
-                trend_factors["price_action"] = 0.5
-                trend_messages.append("Son mumlar yükseliş gösteriyor")
-            elif price_action == "BEARISH":
-                trend_factors["price_action"] = -0.5
-                trend_messages.append("Son mumlar düşüş gösteriyor")
-            else:
-                trend_factors["price_action"] = 0
-            
-            # Hacim analizi
-            volume_change = indicators["volume_change"]
-            volume_trend = indicators.get("volume_trend", "NEUTRAL")
-            
-            # Hacim değişimi yüksekse ve fiyat yükseliyorsa güçlü sinyal
-            last_close = df['close'].iloc[-1]
-            last_open = df['open'].iloc[-1]
-            price_up = last_close > last_open
-            
-            if volume_change > 100 and price_up:
-                trend_factors["volume"] = 1  # Çok yüksek hacimle yükseliş
-                trend_messages.append("Çok yüksek hacimle yükseliş (%100+ hacim artışı)")
-            elif volume_change > 100 and not price_up:
-                trend_factors["volume"] = -1  # Çok yüksek hacimle düşüş
-                trend_messages.append("Çok yüksek hacimle düşüş (%100+ hacim artışı)")
-            elif volume_change > 50 and price_up:
-                trend_factors["volume"] = 0.7  # Yüksek hacimle yükseliş
-                trend_messages.append("Yüksek hacimle yükseliş (%50+ hacim artışı)")
-            elif volume_change > 50 and not price_up:
-                trend_factors["volume"] = -0.7  # Yüksek hacimle düşüş
-                trend_messages.append("Yüksek hacimle düşüş (%50+ hacim artışı)")
-            elif volume_change > 20:
-                trend_factors["volume"] = 0.3  # Orta hacim artışı
-            elif volume_change < -50:
-                trend_factors["volume"] = -0.3  # Hacimde büyük düşüş
-                trend_messages.append("Hacimde büyük düşüş (düşük ilgi)")
-            else:
-                trend_factors["volume"] = 0
-            
-            # Hacim trendi
-            if volume_trend == "RISING" and price_up:
-                trend_factors["volume_trend"] = 0.3
-                trend_messages.append("Artan hacim trendi ile yükseliş")
-            elif volume_trend == "RISING" and not price_up:
-                trend_factors["volume_trend"] = -0.3
-                trend_messages.append("Artan hacim trendi ile düşüş")
-            elif volume_trend == "FALLING":
-                trend_factors["volume_trend"] = -0.1
-                trend_messages.append("Azalan hacim trendi")
-            else:
-                trend_factors["volume_trend"] = 0
-            
-            # Ağırlıklar
-            weights = {
-                "ema": 0.35,
-                "macd": 0.15,
-                "rsi": 0.15,
-                "bb": 0.10,
-                "volume": 0.10,
-                "price_action": 0.05,
-                "macd_hist": 0.05,
-                "rsi_trend": 0.03,
-                "volume_trend": 0.02
-            }
-            
-            # Ağırlıklı trend skoru hesapla
-            weighted_score = 0
-            for factor, score in trend_factors.items():
-                if factor in weights:
-                    weighted_score += score * weights[factor]
-            
-            # Trendi belirle
-            if weighted_score >= 0.7:
-                final_trend = "STRONGLY_BULLISH"
-            elif weighted_score >= 0.3:
-                final_trend = "BULLISH"
-            elif weighted_score <= -0.7:
-                final_trend = "STRONGLY_BEARISH"
-            elif weighted_score <= -0.3:
-                final_trend = "BEARISH"
-            else:
-                final_trend = "NEUTRAL"
-            
-            # Trend gücü: Mutlak değerin 0-1 arasında normalizasyonu
-            trend_strength = min(abs(weighted_score), 1)
-            
-            # En önemli 3 trend faktörünü seç
-            indicators["trend_messages"] = trend_messages[:3]
-            
-            return final_trend, trend_strength
+        """Teknik göstergeleri hesapla"""
+        # RSI hesapla
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
         
-        except Exception as e:
-            self.logger.error(f"Trend analizi hatası: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return "NEUTRAL", 0
-
-
-    def calculate_stop_and_target(self, df: pd.DataFrame, trend: str, current_price: float) -> Tuple[float, float]:
-        """Stop-loss ve hedef fiyatları hesapla"""
+        # MACD hesapla
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        histogram = macd - signal
+        
+        # Bollinger Bands hesapla
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        bb_middle = typical_price.rolling(window=20).mean()
+        bb_std = typical_price.rolling(window=20).std()
+        bb_upper = bb_middle + (2 * bb_std)
+        bb_lower = bb_middle - (2 * bb_std)
+        
+        # BB pozisyonu hesapla: %B = (Price - Lower BB) / (Upper BB - Lower BB)
+        last_close = df['close'].iloc[-1]
+        last_lower = bb_lower.iloc[-1]
+        last_upper = bb_upper.iloc[-1]
+        bb_range = last_upper - last_lower
+        bb_position = ((last_close - last_lower) / bb_range) * 100 if bb_range > 0 else 50
+        
+        # EMA hesapla
+        emas = {}
+        for period in self.ema_periods:
+            emas[f'ema{period}'] = df['close'].ewm(span=period, adjust=False).mean().iloc[-1]
+        
+        # Stochastic Oscillator hesapla
+        low_min = df['low'].rolling(window=14).min()
+        high_max = df['high'].rolling(window=14).max()
+        k = 100 * ((df['close'] - low_min) / (high_max - low_min))
+        d = k.rolling(window=3).mean()
+        
+        # Hacim değişimi
+        volume_ma = df['volume'].rolling(window=20).mean()
+        current_volume = df['volume'].iloc[-1]
+        volume_change = ((current_volume - volume_ma.iloc[-1]) / volume_ma.iloc[-1]) * 100 if volume_ma.iloc[-1] > 0 else 0
+        
+        # Sonuçları döndür
+        return {
+            "rsi": rsi.iloc[-1],
+            "macd": macd.iloc[-1],
+            "macd_signal": signal.iloc[-1],
+            "macd_hist": histogram.iloc[-1],
+            "bb_upper": bb_upper.iloc[-1],
+            "bb_middle": bb_middle.iloc[-1],
+            "bb_lower": bb_lower.iloc[-1],
+            "bb_position": bb_position,
+            "emas": emas,
+            "stoch_k": k.iloc[-1],
+            "stoch_d": d.iloc[-1],
+            "volume_change": volume_change
+        }
+    def calculate_stop_and_target(self, df: pd.DataFrame, trend: str, current_price: float, direction="LONG") -> Tuple[float, float]:
+        """Stop-loss ve hedef fiyat seviyelerini hesapla"""
         try:
-            # None kontrolü ekleyelim
-            if current_price is None:
-                self.logger.warning("Geçerli fiyat değeri None. Varsayılan değerler kullanılıyor.")
-                # Veri varsa son kapanış fiyatını kullan, yoksa 0 döndür
-                current_price = df['close'].iloc[-1] if not df.empty else 0
+            if df is None or df.empty or current_price <= 0:
+                return 0, 0
             
-            # Veri kontrolü
-            if df.empty:
-                self.logger.warning("DataFrame boş, varsayılan stop-loss ve hedef değerleri kullanılıyor.")
-                return current_price * 0.95, current_price * 1.10
-            
-            # Son 20 mumun yüksek/düşük değerlerini al
-            recent_high = df['high'][-20:].max()
-            recent_low = df['low'][-20:].min()
+            # Son bir haftalık fiyat hareketine bak
+            recent_df = df.tail(96)  # Son 24 saat (15dk timeframe)
             
             # ATR (Average True Range) hesapla - volatilite ölçüsü
-            high_low = df['high'] - df['low']
-            high_close = (df['high'] - df['close'].shift()).abs()
-            low_close = (df['low'] - df['close'].shift()).abs()
-            true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            atr = true_range.rolling(window=14).mean().iloc[-1]
+            high = recent_df['high'].values
+            low = recent_df['low'].values
+            close = recent_df['close'].values
             
-            # ATR değeri None ise güvenli bir değer kullan
-            if pd.isna(atr) or atr is None:
-                self.logger.warning("ATR değeri hesaplanamadı, varsayılan değer kullanılıyor.")
-                atr = current_price * 0.02  # Varsayılan olarak fiyatın %2'si
+            tr1 = np.abs(high - low)
+            tr2 = np.abs(high - np.roll(close, 1))
+            tr3 = np.abs(low - np.roll(close, 1))
             
-            # Trend bazlı stop-loss ve hedef hesapla
-            if trend in ["BULLISH", "STRONGLY_BULLISH"]:
-                # LONG pozisyon
-                stop_loss = current_price - (atr * 2)  # 2 ATR altında stop
-                take_profit = current_price + (atr * 4)  # 4 ATR üstünde hedef (2:1 oran)
+            tr = np.vstack([tr1, tr2, tr3])
+            atr = np.mean(np.max(tr, axis=0))
+            
+            # Son N mumun en yüksek ve en düşük değerlerini bul
+            if direction == "LONG":
+                # LONG pozisyonlar için
+                # Son 12 mumun en düşüğü (stop-loss için)
+                recent_low = recent_df['low'].tail(12).min()
+                distance_to_low = current_price - recent_low
                 
-                # Ek olarak, son düşük değer stop olarak kullanılabilir
-                # None ve NaN kontrolü yap
-                if pd.notna(recent_low) and recent_low is not None:
-                    alt_stop = recent_low
-                    # Hangisi daha yakınsa onu kullan, ama çok uzakta değilse
-                    if alt_stop > current_price - (atr * 3) and alt_stop < current_price:
-                        stop_loss = alt_stop
-            
-            elif trend in ["BEARISH", "STRONGLY_BEARISH"]:
-                # SHORT pozisyon
-                stop_loss = current_price + (atr * 2)  # 2 ATR üstünde stop
-                take_profit = current_price - (atr * 4)  # 4 ATR altında hedef (2:1 oran)
+                # Stop-loss hesapla
+                if trend in ['STRONGLY_BULLISH']:
+                    # Güçlü trend: ATR'nin 2 katı ya da son düşük, hangisi daha yakınsa
+                    stop_distance = min(2 * atr, distance_to_low * 0.9)
+                elif trend in ['BULLISH']:
+                    # Normal trend: ATR'nin 1.5 katı ya da son düşük
+                    stop_distance = min(1.5 * atr, distance_to_low * 0.8)
+                else:
+                    # Zayıf veya nötr trend: ATR veya son düşük * 0.7
+                    stop_distance = min(1 * atr, distance_to_low * 0.7)
                 
-                # Ek olarak, son yüksek değer stop olarak kullanılabilir
-                # None ve NaN kontrolü yap
-                if pd.notna(recent_high) and recent_high is not None:
-                    alt_stop = recent_high
-                    # Hangisi daha yakınsa onu kullan, ama çok uzakta değilse
-                    if alt_stop < current_price + (atr * 3) and alt_stop > current_price:
-                        stop_loss = alt_stop
-            
+                stop_price = max(current_price - stop_distance, recent_low * 0.99)
+                
+                # Hedef fiyat (TP) - Risk/Ödül oranına göre
+                risk = current_price - stop_price
+                reward_ratio = 2.0 if trend in ['STRONGLY_BULLISH'] else 1.5
+                target_price = current_price + (risk * reward_ratio)
+                
             else:
-                # NEUTRAL trend
-                stop_loss = current_price * 0.95  # %5 aşağıda varsayılan stop
-                take_profit = current_price * 1.10  # %10 yukarıda varsayılan hedef
+                # SHORT pozisyonlar için
+                # Son 12 mumun en yükseği (stop-loss için)
+                recent_high = recent_df['high'].tail(12).max()
+                distance_to_high = recent_high - current_price
+                
+                # Stop-loss hesapla
+                if trend in ['STRONGLY_BEARISH']:
+                    # Güçlü trend: ATR'nin 2 katı ya da son yüksek, hangisi daha yakınsa
+                    stop_distance = min(2 * atr, distance_to_high * 0.9)
+                elif trend in ['BEARISH']:
+                    # Normal trend: ATR'nin 1.5 katı ya da son yüksek
+                    stop_distance = min(1.5 * atr, distance_to_high * 0.8)
+                else:
+                    # Zayıf veya nötr trend: ATR veya son yüksek * 0.7
+                    stop_distance = min(1 * atr, distance_to_high * 0.7)
+                
+                stop_price = min(current_price + stop_distance, recent_high * 1.01)
+                
+                # Hedef fiyat (TP) - Risk/Ödül oranına göre
+                risk = stop_price - current_price
+                reward_ratio = 2.0 if trend in ['STRONGLY_BEARISH'] else 1.5
+                target_price = current_price - (risk * reward_ratio)
             
-            return stop_loss, take_profit
-            
+            return stop_price, target_price
+        
         except Exception as e:
-            self.logger.error(f"Stop-loss ve hedef hesaplama hatası: {str(e)}")
-            # Varsayılan değerler
-            return current_price * 0.95, current_price * 1.10
+            self.logger.error(f"Stop ve target hesaplama hatası: {str(e)}")
+            return 0, 0
 
-
-    def _combine_preliminary_results(self, four_hour_results, hourly_results):
-        """4 saatlik ve saatlik analiz sonuçlarını birleştirir"""
+    def _combine_timeframe_results(self, previous_results, new_results, prev_prefix, new_prefix):
+        """İki farklı zaman dilimi analiz sonuçlarını birleştirir"""
         try:
             combined_results = []
             
-            # 4 saatlik sonuçları döngüye al
-            for h4_result in four_hour_results:
-                symbol = h4_result['symbol']
+            # Önceki sonuçları döngüye al
+            for prev in previous_results:
+                symbol = prev['symbol']
                 
-                # Bu sembol için saatlik sonucu bul
-                hourly = next((h for h in hourly_results if h['symbol'] == symbol), None)
+                # Bu sembol için yeni sonucu bul
+                new = next((n for n in new_results if n['symbol'] == symbol), None)
                 
-                # Eğer saatlik sonuç bulunamazsa, sadece 4 saatlik ile devam et
-                if hourly is None:
-                    result = h4_result.copy()
-                    result['hourly_trend'] = 'UNKNOWN'
-                    result['hourly_trend_strength'] = 0
-                    # Puanı olduğu gibi koru
-                else:
-                    # 4 saatlik ve saatlik sonuçları birleştir
-                    result = h4_result.copy()
-                    result.update(hourly)
-                    
-                    # Fırsat puanını güncelle
-                    score = result.get('opportunity_score', 0)
-                    
-                    # Saatlik trend puanı (0-20 arası)
-                    if hourly['hourly_trend'] == 'STRONGLY_BULLISH':
-                        score += 20
-                    elif hourly['hourly_trend'] == 'BULLISH':
-                        score += 15
-                    elif hourly['hourly_trend'] == 'NEUTRAL':
-                        score += 5
-                    elif hourly['hourly_trend'] == 'BEARISH':
-                        score -= 10
-                    
-                    # RSI değerlendirmesi
-                    hourly_rsi = hourly['hourly_indicators'].get('rsi', 50)
-                    
-                    # RSI 30-70 arasında ise bonus puan
-                    if 30 <= hourly_rsi <= 70:
-                        score += 5
-                    
-                    # RSI trendle uyumlu ise bonus
-                    if hourly['hourly_trend'] in ['BULLISH', 'STRONGLY_BULLISH'] and hourly_rsi > 50:
-                        score += 5
-                    
-                    # Puanı 0-100 arasına sınırla
-                    result['opportunity_score'] = min(max(score, 0), 100)
-                
-                combined_results.append(result)
-            
-            return combined_results
-            
-        except Exception as e:
-            self.logger.error(f"Ön sonuçları birleştirme hatası: {str(e)}")
-            return four_hour_results  # Hata durumunda 4 saatlik sonuçları döndür
-
-
-    def _combine_final_results(self, preliminary_results, m15_results):
-        """Ön sonuçlar ile 15dk analizini birleştirir"""
-        try:
-            final_results = []
-            
-            # Ön sonuçları döngüye al
-            for prelim in preliminary_results:
-                symbol = prelim['symbol']
-                
-                # Bu sembol için 15dk sonucunu bul
-                m15 = next((m for m in m15_results if m['symbol'] == symbol), None)
-                
-                # 15dk sonucu bulunamazsa, ön sonuçla devam et
-                if m15 is None:
-                    result = prelim.copy()
-                    result['signal'] = "⚪ BEKLE"
-                    result['15m_trend'] = 'UNKNOWN'
-                    result['15m_trend_strength'] = 0
-                    result['current_price'] = prelim.get('hourly_price', prelim.get('weekly_price', 0))
-                    result['stop_price'] = 0
-                    result['target_price'] = 0
-                    result['risk_reward'] = 0
+                # Yeni sonuç bulunamazsa, sadece önceki ile devam et
+                if new is None:
+                    result = prev.copy()
+                    # Yeni zaman dilimi için varsayılan değerler
+                    result[f'{new_prefix}_trend'] = 'UNKNOWN'
+                    result[f'{new_prefix}_trend_strength'] = 0
+                    # Varsayılan puanı koru veya hesapla
+                    if 'opportunity_score' not in result:
+                        # Sadece trendlere göre puan hesapla
+                        trend = prev.get(f'{prev_prefix}_trend', 'NEUTRAL')
+                        if trend in ['STRONGLY_BULLISH', 'STRONGLY_BEARISH']:
+                            result['opportunity_score'] = 60
+                        elif trend in ['BULLISH', 'BEARISH']:
+                            result['opportunity_score'] = 40
+                        else:
+                            result['opportunity_score'] = 20
                 else:
                     # Tüm sonuçları birleştir
-                    result = prelim.copy()
-                    result.update(m15)
+                    result = prev.copy()
                     
-                    # Fırsat puanını güncelle (15dk analizine göre)
+                    # Yeni zaman dilimi alanlarını kopyala
+                    result[f'{new_prefix}_trend'] = new['trend']
+                    result[f'{new_prefix}_trend_strength'] = new['trend_strength']
+                    result[f'{new_prefix}_indicators'] = new['indicators']
+                    
+                    # Price ve Volume bilgilerini güncelle
+                    result['current_price'] = new['current_price']
+                    result[f'{new_prefix}_volume'] = new['volume']
+                    
+                    # Stop/Target bilgilerini ekle
+                    if new['stop_price'] > 0:
+                        result['stop_price'] = new['stop_price']
+                        result['target_price'] = new['target_price']
+                        result['risk_reward'] = new['risk_reward']
+                    
+                    # Trend açıklamalarını ekle
+                    if 'trend_descriptions' in new:
+                        result[f'{new_prefix}_trend_descriptions'] = new['trend_descriptions']
+                    
+                    # Fırsat puanını hesapla veya güncelle
                     score = result.get('opportunity_score', 0)
                     
-                    # 15dk trend puanı (0-20)
-                    if m15['15m_trend'] == 'STRONGLY_BULLISH':
-                        score += 20
-                    elif m15['15m_trend'] == 'BULLISH':
-                        score += 15
-                    elif m15['15m_trend'] == 'NEUTRAL':
-                        score += 5
-                    elif m15['15m_trend'] == 'BEARISH':
-                        score -= 10
-                    elif m15['15m_trend'] == 'STRONGLY_BEARISH':
-                        score -= 20
+                    # Önceki trend puanı
+                    prev_trend = prev.get(f'{prev_prefix}_trend', 'NEUTRAL')
+                    
+                    # Yeni trend puanı
+                    new_trend = new['trend']
+                    
+                    # LONG fırsatları için
+                    if prev_trend in ['BULLISH', 'STRONGLY_BULLISH']:
+                        if new_trend == 'STRONGLY_BULLISH':
+                            score += 25
+                        elif new_trend == 'BULLISH':
+                            score += 15
+                        elif new_trend == 'NEUTRAL':
+                            score += 5
+                        elif new_trend == 'BEARISH':
+                            score -= 10
+                        elif new_trend == 'STRONGLY_BEARISH':
+                            score -= 20
+                    
+                    # SHORT fırsatları için
+                    elif prev_trend in ['BEARISH', 'STRONGLY_BEARISH']:
+                        if new_trend == 'STRONGLY_BEARISH':
+                            score += 25
+                        elif new_trend == 'BEARISH':
+                            score += 15
+                        elif new_trend == 'NEUTRAL':
+                            score += 5
+                        elif new_trend == 'BULLISH':
+                            score -= 10
+                        elif new_trend == 'STRONGLY_BULLISH':
+                            score -= 20
                     
                     # Risk/Ödül oranına göre bonus
-                    risk_reward = m15.get('risk_reward', 0)
-                    if risk_reward >= 3:  # 3:1 veya daha iyi ise
-                        score += 10
-                    elif risk_reward >= 2:  # 2:1 veya daha iyi ise
-                        score += 5
-                    
-                    # Son fiyata göre trend değişimi kontrolü
-                    weekly_price = prelim.get('weekly_price', 0)
-                    hourly_price = prelim.get('hourly_price', 0)
-                    current_price = m15.get('current_price', 0)
-                    
-                    # Fiyat artışı varsa bonus
-                    if current_price > hourly_price > weekly_price:
-                        score += 5  # Sürekli artış var
-                    elif current_price < hourly_price < weekly_price:
-                        score -= 5  # Sürekli düşüş var
-                    
-                    # Puanı 0-100 arasına sınırla
-                    result['opportunity_score'] = min(max(score, 0), 100)
-                
-                final_results.append(result)
-            
-            return final_results
-            
-        except Exception as e:
-            self.logger.error(f"Final sonuçları birleştirme hatası: {str(e)}")
-            return preliminary_results  # Hata durumunda ön sonuçları döndür
-
-
-    def _combine_weekly_and_4h_results(self, weekly_results, h4_results):
-        """Haftalık ve 4 saatlik analiz sonuçlarını birleştirir"""
-        try:
-            combined_results = []
-            
-            # Haftalık sonuçları döngüye al
-            for weekly in weekly_results:
-                symbol = weekly['symbol']
-                
-                # Bu sembol için 4 saatlik sonucu bul
-                h4 = next((h for h in h4_results if h['symbol'] == symbol), None)
-                
-                # Eğer 4 saatlik sonuç bulunamazsa, sadece haftalık ile devam et
-                if h4 is None:
-                    result = weekly.copy()
-                    result['h4_trend'] = 'UNKNOWN'
-                    result['h4_trend_strength'] = 0
-                    # Varsayılan puanı ayarla (sadece haftalık analiz)
-                    initial_score = 0
-                    if weekly['weekly_trend'] == 'STRONGLY_BULLISH':
-                        initial_score = 40
-                    elif weekly['weekly_trend'] == 'BULLISH':
-                        initial_score = 30
-                    result['opportunity_score'] = initial_score
-                else:
-                    # Haftalık ve 4 saatlik sonuçları birleştir
-                    result = weekly.copy()
-                    result.update(h4)
-                    
-                    # Fırsat puanını hesapla (0-100 arası)
-                    score = 0
-                    
-                    # Haftalık trend puanı (0-40)
-                    if weekly['weekly_trend'] == 'STRONGLY_BULLISH':
-                        score += 40
-                    elif weekly['weekly_trend'] == 'BULLISH':
-                        score += 30
-                    elif weekly['weekly_trend'] == 'NEUTRAL':
-                        score += 10
-                    
-                    # 4 Saatlik trend puanı (0-40)
-                    if h4['h4_trend'] == 'STRONGLY_BULLISH':
-                        score += 40
-                    elif h4['h4_trend'] == 'BULLISH':
-                        score += 30
-                    elif h4['h4_trend'] == 'NEUTRAL':
-                        score += 10
-                    
-                    # Trend gücü puanı (0-20)
-                    trend_strength_score = (weekly['weekly_trend_strength'] * 10 + h4['h4_trend_strength'] * 10)
-                    score += trend_strength_score
+                    if 'risk_reward' in new and new['risk_reward'] > 0:
+                        risk_reward = new['risk_reward']
+                        if risk_reward >= 3:  # 3:1 veya daha iyi ise
+                            score += 10
+                        elif risk_reward >= 2:  # 2:1 veya daha iyi ise
+                            score += 5
                     
                     # Puanı 0-100 arasına sınırla
                     result['opportunity_score'] = min(max(score, 0), 100)
@@ -1152,9 +564,10 @@ class MultiTimeframeAnalyzer:
             return combined_results
             
         except Exception as e:
-            self.logger.error(f"4 saatlik sonuçları birleştirme hatası: {str(e)}")
-            return weekly_results  # Hata durumunda haftalık sonuçları döndür
-
+            self.logger.error(f"Zaman dilimi sonuçlarını birleştirme hatası: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return previous_results  # Hata durumunda önceki sonuçları döndür
 
     async def generate_multi_timeframe_chart(self, symbol: str) -> BytesIO:
         """Çoklu zaman dilimi grafiği oluştur"""
@@ -1178,8 +591,11 @@ class MultiTimeframeAnalyzer:
             self._plot_timeframe(axs[2], hourly_data, symbol, "1H - Kısa Vadeli Trend")
             self._plot_timeframe(axs[3], m15_data, symbol, "15M - Giriş/Çıkış Noktaları")
             
+            # Genel grafik başlığı
+            fig.suptitle(f"{symbol} Çoklu Zaman Dilimi Analizi", fontsize=16, fontweight='bold')
+            
             # Grafik stilini düzenle
-            plt.tight_layout()
+            plt.tight_layout(rect=[0, 0, 1, 0.97])  # Üst başlık için yer bırak
             
             # BytesIO nesnesine kaydet
             buf = BytesIO()
@@ -1235,8 +651,11 @@ class MultiTimeframeAnalyzer:
             elif trend in ["STRONGLY_BEARISH", "BEARISH"]:
                 trend_color = 'red'
             
+            # Trend emoji belirle
+            trend_emoji = "↗️" if trend in ["STRONGLY_BULLISH", "BULLISH"] else "↘️" if trend in ["STRONGLY_BEARISH", "BEARISH"] else "➡️"
+            
             # Grafik başlığı ve trend bilgisi
-            ax.set_title(f"{title} ({trend}, Güç: {trend_strength:.2f})", color=trend_color, fontweight='bold')
+            ax.set_title(f"{title} ({trend_emoji} {trend}, Güç: {trend_strength:.2f})", color=trend_color, fontweight='bold')
             ax.legend(loc='upper left')
             
             # Y ekseni fiyat formatı
@@ -1258,6 +677,13 @@ class MultiTimeframeAnalyzer:
             # Grid çizgileri
             ax.grid(True, alpha=0.3)
             
+            # Trend açıklamalarını ekle
+            if indicators and 'trend_messages' in indicators:
+                y_pos = 0.02
+                for msg in indicators['trend_messages'][:2]:
+                    ax.text(0.02, y_pos, f"• {msg}", transform=ax.transAxes, fontsize=8)
+                    y_pos += 0.05
+            
         except Exception as e:
             self.logger.error(f"Timeframe plot hatası: {str(e)}")
 
@@ -1273,6 +699,12 @@ class MultiTimeframeAnalyzer:
             List[str]: Popüler sembollerin listesi
         """
         try:
+            # Önbellek anahtarı oluştur
+            cache_key = f"top_symbols_{limit}_{quote_currency}"
+            cached_symbols = self.data_cache.get(cache_key)
+            if cached_symbols:
+                return cached_symbols
+                
             self.logger.info(f"En popüler {limit} sembol alınıyor...")
             
             # CCXT ile tüm işlemleri al
@@ -1337,6 +769,9 @@ class MultiTimeframeAnalyzer:
                         binance_format = symbol
                     binance_format_symbols.append(binance_format)
                 
+                # Önbelleğe kaydet
+                self.data_cache[cache_key] = binance_format_symbols
+                
                 self.logger.info(f"{len(binance_format_symbols)} popüler sembol bulundu")
                 return binance_format_symbols
                 
@@ -1361,4 +796,206 @@ class MultiTimeframeAnalyzer:
             ]
             return default_symbols[:limit]
 
-
+    def analyze_trend(self, df: pd.DataFrame, indicators: Dict) -> Tuple[str, float]:
+        """Gelişmiş trend analizi ve trend gücü hesaplama"""
+        try:
+            # Tüm göstergeleri değerlendir
+            trend_factors = {}
+            trend_messages = []
+            
+            # RSI bazlı trend analizi
+            rsi = indicators["rsi"]
+            if rsi > 70:
+                trend_factors["rsi"] = -1  # Aşırı alım (bearish)
+                trend_messages.append("RSI aşırı alım bölgesinde (>70)")
+            elif rsi < 30:
+                trend_factors["rsi"] = 1   # Aşırı satım (bullish)
+                trend_messages.append("RSI aşırı satım bölgesinde (<30)")
+            elif rsi > 55:
+                trend_factors["rsi"] = 0.5  # Bullish eğilim
+                trend_messages.append("RSI yükseliş bölgesinde (>55)")
+            elif rsi < 45:
+                trend_factors["rsi"] = -0.5  # Bearish eğilim
+                trend_messages.append("RSI düşüş bölgesinde (<45)")
+            else:
+                trend_factors["rsi"] = 0  # Nötr
+            
+            # MACD bazlı trend analizi
+            macd = indicators["macd"]
+            macd_signal = indicators["macd_signal"]
+            macd_hist = indicators["macd_hist"]
+            
+            if macd > macd_signal and macd_hist > 0:
+                trend_factors["macd"] = 1  # Güçlü yükseliş sinyali
+                trend_messages.append("MACD yükseliş sinyali veriyor")
+            elif macd < macd_signal and macd_hist < 0:
+                trend_factors["macd"] = -1  # Güçlü düşüş sinyali
+                trend_messages.append("MACD düşüş sinyali veriyor")
+            elif macd > macd_signal:
+                trend_factors["macd"] = 0.5  # Yükseliş sinyali
+                trend_messages.append("MACD çizgisi sinyal çizgisinin üzerinde")
+            elif macd < macd_signal:
+                trend_factors["macd"] = -0.5  # Düşüş sinyali
+                trend_messages.append("MACD çizgisi sinyal çizgisinin altında")
+            else:
+                trend_factors["macd"] = 0
+            
+            # EMA bazlı trend analizi
+            emas = indicators["emas"]
+            close = df['close'].iloc[-1]
+            
+            ema9 = emas.get("ema9", 0)
+            ema20 = emas.get("ema20", 0)
+            ema50 = emas.get("ema50", 0)
+            ema200 = emas.get("ema200", 0) if "ema200" in emas else None
+            
+            # EMA setlerinin sıralaması
+            ema_trend = 0
+            ema_messages = []
+            
+            # Fiyat tüm EMA'ların üzerinde mi (güçlü yükseliş)
+            if ema200 is not None and close > ema9 > ema20 > ema50 > ema200:
+                ema_trend += 2
+                ema_messages.append("Fiyat tüm EMA'ların üzerinde (çok güçlü yükseliş)")
+            elif close > ema9 > ema20 > ema50:
+                ema_trend += 1.5
+                ema_messages.append("Fiyat tüm kısa ve orta vadeli EMA'ların üzerinde (güçlü yükseliş)")
+            
+            # Fiyat tüm EMA'ların altında mı (güçlü düşüş)
+            elif ema200 is not None and close < ema9 < ema20 < ema50 < ema200:
+                ema_trend -= 2
+                ema_messages.append("Fiyat tüm EMA'ların altında (çok güçlü düşüş)")
+            elif close < ema9 < ema20 < ema50:
+                ema_trend -= 1.5
+                ema_messages.append("Fiyat tüm kısa ve orta vadeli EMA'ların altında (güçlü düşüş)")
+            
+            # Pozitif çapraz geçişler
+            elif ema9 > ema20 > ema50 and close > ema9:
+                ema_trend += 1
+                ema_messages.append("Altın çapraz formasyon (EMA9 > EMA20 > EMA50)")
+            elif close > ema20 > ema50:
+                ema_trend += 0.8
+                ema_messages.append("Fiyat orta vadeli EMA'ların üzerinde")
+            elif close > ema50:
+                ema_trend += 0.5
+                ema_messages.append("Fiyat EMA50'nin üzerinde")
+            
+            # Negatif çapraz geçişler
+            elif ema9 < ema20 < ema50 and close < ema9:
+                ema_trend -= 1
+                ema_messages.append("Ölüm çaprazı formasyon (EMA9 < EMA20 < EMA50)")
+            elif close < ema20 < ema50:
+                ema_trend -= 0.8
+                ema_messages.append("Fiyat orta vadeli EMA'ların altında")
+            elif close < ema50:
+                ema_trend -= 0.5
+                ema_messages.append("Fiyat EMA50'nin altında")
+            
+            # En önemli EMA mesajını ekle
+            if ema_messages:
+                trend_messages.append(ema_messages[0])
+            
+            trend_factors["ema"] = ema_trend
+            
+            # Bollinger Bands bazlı trend
+            bb_position = indicators["bb_position"]
+            
+            if bb_position > 90:
+                trend_factors["bb"] = -1  # Aşırı alım ve olası geri çekilme
+                trend_messages.append("Fiyat üst BB bandının üstünde (aşırı alım)")
+            elif bb_position < 10:
+                trend_factors["bb"] = 1  # Aşırı satım ve olası yükseliş
+                trend_messages.append("Fiyat alt BB bandının altında (aşırı satım)")
+            elif bb_position > 80:
+                trend_factors["bb"] = -0.5  # Üst banda yakın
+                trend_messages.append("Fiyat üst BB bandına yakın")
+            elif bb_position < 20:
+                trend_factors["bb"] = 0.5  # Alt banda yakın
+                trend_messages.append("Fiyat alt BB bandına yakın")
+            else:
+                trend_factors["bb"] = 0  # Bantların ortasında
+            
+            # Hacim analizi
+            volume_change = indicators["volume_change"]
+            
+            # Hacim değişimi yüksekse ve fiyat yükseliyorsa güçlü sinyal
+            last_close = df['close'].iloc[-1]
+            last_open = df['open'].iloc[-1]
+            price_up = last_close > last_open
+            
+            if volume_change > 100 and price_up:
+                trend_factors["volume"] = 1  # Çok yüksek hacimle yükseliş
+                trend_messages.append("Çok yüksek hacimle yükseliş (%100+ hacim artışı)")
+            elif volume_change > 100 and not price_up:
+                trend_factors["volume"] = -1  # Çok yüksek hacimle düşüş
+                trend_messages.append("Çok yüksek hacimle düşüş (%100+ hacim artışı)")
+            elif volume_change > 50 and price_up:
+                trend_factors["volume"] = 0.7  # Yüksek hacimle yükseliş
+                trend_messages.append("Yüksek hacimle yükseliş (%50+ hacim artışı)")
+            elif volume_change > 50 and not price_up:
+                trend_factors["volume"] = -0.7  # Yüksek hacimle düşüş
+                trend_messages.append("Yüksek hacimle düşüş (%50+ hacim artışı)")
+            elif volume_change > 20:
+                trend_factors["volume"] = 0.3  # Orta hacim artışı
+            elif volume_change < -50:
+                trend_factors["volume"] = -0.3  # Hacimde büyük düşüş
+                trend_messages.append("Hacimde büyük düşüş (düşük ilgi)")
+            else:
+                trend_factors["volume"] = 0
+            
+            # Stochastic Oscillator
+            stoch_k = indicators.get("stoch_k", 50)
+            stoch_d = indicators.get("stoch_d", 50)
+            
+            if stoch_k > 80 and stoch_d > 80:
+                trend_factors["stoch"] = -0.7  # Aşırı alım
+            elif stoch_k < 20 and stoch_d < 20:
+                trend_factors["stoch"] = 0.7  # Aşırı satım
+            elif stoch_k > stoch_d and stoch_k < 80:
+                trend_factors["stoch"] = 0.3  # Yükseliş sinyali
+            elif stoch_k < stoch_d and stoch_k > 20:
+                trend_factors["stoch"] = -0.3  # Düşüş sinyali
+            else:
+                trend_factors["stoch"] = 0
+            
+            # Ağırlıklar
+            weights = {
+                "ema": 0.35,
+                "macd": 0.20,
+                "rsi": 0.15,
+                "bb": 0.10,
+                "volume": 0.10,
+                "stoch": 0.10
+            }
+            
+            # Ağırlıklı trend skoru hesapla
+            weighted_score = 0
+            for factor, score in trend_factors.items():
+                if factor in weights:
+                    weighted_score += score * weights[factor]
+            
+            # Trendi belirle
+            if weighted_score >= 0.7:
+                final_trend = "STRONGLY_BULLISH"
+            elif weighted_score >= 0.3:
+                final_trend = "BULLISH"
+            elif weighted_score <= -0.7:
+                final_trend = "STRONGLY_BEARISH"
+            elif weighted_score <= -0.3:
+                final_trend = "BEARISH"
+            else:
+                final_trend = "NEUTRAL"
+            
+            # Trend gücü: Mutlak değerin 0-1 arasında normalizasyonu
+            trend_strength = min(abs(weighted_score), 1)
+            
+            # Trend mesajlarını kaydet
+            indicators["trend_messages"] = trend_messages
+            
+            return final_trend, trend_strength
+        
+        except Exception as e:
+            self.logger.error(f"Trend analizi hatası: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return "NEUTRAL", 0

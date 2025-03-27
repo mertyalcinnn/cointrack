@@ -60,10 +60,12 @@ class MultiTimeframeHandler:
                 # Genel market taraması
                 wait_message = await message.reply_text("⏳ Tüm market çoklu zaman dilimi ile taranıyor, lütfen bekleyin...")
             
-            # Analizi yap - self.analyzer kullan, self.bot.scanner yerine
+            # Analizi yap - demo parametresini kaldır
             if symbol:
+                # Tek sembol analizi
                 results = await self.analyzer.scan_market([symbol])
             else:
+                # Genel tarama
                 results = await self.analyzer.scan_market()
             
             # Sonuçları formatlayıp gönder
@@ -128,61 +130,58 @@ class MultiTimeframeHandler:
             else:
                 await message.reply_text("❌ Analiz sırasında bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
     
-    async def refresh_multi_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Çoklu zaman dilimi analizini yenileyen callback işleyici"""
+    async def refresh_multi_callback(self, update, context):
+        """Çoklu zaman dilimi analizini yenile"""
         try:
             query = update.callback_query
             await query.answer("Analiz yenileniyor...")
             
-            # Mevcut sembol kontrolü
-            message_text = query.message.text
-            symbol_line = message_text.split('\n', 1)[0]
+            # Callback verilerini ayrıştır
+            callback_data = query.data
+            parts = callback_data.split('_')
+            
             symbol = None
+            if len(parts) > 2:
+                symbol = parts[2]
             
-            # Mesaj başlığından sembolü çıkart
-            if "Analiz Sonuçları:" in symbol_line:
-                symbol_parts = symbol_line.split()
-                if len(symbol_parts) > 0 and symbol_parts[0].endswith("USDT"):
-                    symbol = symbol_parts[0]
+            # Analizi yenile - demo parametresi kaldırıldı
+            if symbol:
+                # Tek sembol analizi
+                results = await self.analyzer.scan_market([symbol])
+            else:
+                # Genel tarama
+                results = await self.analyzer.scan_market()
             
-            # Analizi yenile
-            results = await self.analyzer.scan_market([symbol] if symbol else None)
-            
-            if results:
-                # Sonuçları formatla
-                message_text = self._format_multi_results(results)
-                
-                # Refresh butonu ekle
-                keyboard = [
-                    [InlineKeyboardButton("🔄 Yenile", callback_data="refresh_multi")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
+            # Sonuçları formatlayıp mesajı güncelle
+            try:
+                formatted_text = self._format_multi_results(results)
                 
                 # Mesajı güncelle
                 await query.edit_message_text(
-                    message_text,
-                    reply_markup=reply_markup,
-                    parse_mode='HTML'
+                    text=formatted_text,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=True
                 )
                 
-                # Grafik için yeni bir mesaj gönder
-                top_opportunity = results[0]
-                chart_buf = await self.analyzer.generate_multi_timeframe_chart(top_opportunity["symbol"])
-                if chart_buf:
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat_id,
-                        photo=chart_buf,
-                        caption=f"📊 {top_opportunity['symbol']} Çoklu Zaman Dilimi Analizi (Yenilendi)"
-                    )
-            else:
-                scan_type = f"{symbol} çoklu zaman dilimi" if symbol else "çoklu zaman dilimi"
-                await query.edit_message_text(
-                    f"❌ {scan_type.capitalize()} analizi için uygun fırsat bulunamadı!"
+                # Yenileme butonunu ekle
+                refresh_button = InlineKeyboardButton(
+                    "🔄 Yenile", 
+                    callback_data=callback_data
                 )
-            
+                await query.edit_message_reply_markup(
+                    reply_markup=InlineKeyboardMarkup([[refresh_button]])
+                )
+                
+            except BadRequest as e:
+                self.logger.error(f"Yenileme mesajı güncellenirken hata: {str(e)}")
+                await query.edit_message_text(f"⚠️ Sonuçlar formatlanırken hata oluştu. {len(results)} sonuç bulundu.")
+        
         except Exception as e:
-            self.logger.error(f"Refresh multi callback hatası: {str(e)}")
-            await query.answer("Yenileme sırasında bir hata oluştu!")
+            self.logger.error(f"Multi refresh callback hatası: {str(e)}")
+            try:
+                await query.edit_message_text("❌ Analiz yenilenirken bir hata oluştu. Lütfen daha sonra tekrar deneyin.")
+            except:
+                pass
     
     def _format_multi_results(self, results):
         """Çoklu zaman dilimi analiz sonuçlarını okunabilir ve Telegram-uyumlu bir metne dönüştür"""
@@ -190,83 +189,192 @@ class MultiTimeframeHandler:
             if not results or len(results) == 0:
                 return "⚠️ Hiçbir uygun fırsat bulunamadı."
             
-            # Sonuçları fırsat puanına göre filtrele ve sırala
-            filtered_results = [r for r in results if r.get("opportunity_score", 0) > 0]
+            # Debug: Daha detaylı sonuç bilgisi
+            self.logger.info(f"Format öncesi sonuçlar: {len(results)} adet")
+            for idx, r in enumerate(results[:10]):  # İlk 10 sonucu logla
+                signal = r.get('signal', 'SIGNAL_YOK')
+                weekly = r.get('weekly_trend', 'TREND_YOK')
+                m15 = r.get('15m_trend', 'TREND_YOK')
+                score = r.get('opportunity_score', 0)
+                self.logger.info(f"Sonuç {idx+1}: {r.get('symbol')} - Sinyal: {signal} - Weekly: {weekly} - 15M: {m15} - Skor: {score}")
+            
+            # Sinyal belirleme (eksik ise)
+            for result in results:
+                # Sinyal yoksa veya BEKLE ise, trend durumuna göre belirle
+                if not result.get('signal') or result.get('signal') == "⚪ BEKLE":
+                    m15_trend = result.get('15m_trend', 'NEUTRAL')
+                    weekly_trend = result.get('weekly_trend', 'NEUTRAL')
+                    
+                    # Herhangi bir zaman diliminde güçlü trend varsa sinyal ata
+                    if m15_trend in ['STRONGLY_BULLISH', 'BULLISH'] or weekly_trend in ['STRONGLY_BULLISH', 'BULLISH']:
+                        result['signal'] = "🟩 LONG"
+                    elif m15_trend in ['STRONGLY_BEARISH', 'BEARISH'] or weekly_trend in ['STRONGLY_BEARISH', 'BEARISH']:
+                        result['signal'] = "🔴 SHORT"
+                    else:
+                        result['signal'] = "⚪ BEKLE"
+            
+            # Sonuçları puana göre sırala
+            filtered_results = results.copy()
             filtered_results.sort(key=lambda x: x.get("opportunity_score", 0), reverse=True)
             
-            if len(filtered_results) == 0:
-                return "⚠️ Filtreleme sonrası uygun fırsat bulunamadı."
+            # LONG ve SHORT fırsatlarını ayır - ÖNEMLİ DÜZELTME
+            long_results = []
+            short_results = []
             
-            # En iyi 10 fırsatı seç (mesaj çok uzun olmasın)
-            top_results = filtered_results[:10]
+            for result in filtered_results:
+                signal = result.get("signal", "")
+                
+                # Sinyal tipine göre kategorize et
+                if signal.startswith("🟩") or "LONG" in signal:
+                    long_results.append(result)
+                    self.logger.info(f"LONG eklendi: {result.get('symbol')} - {signal}")
+                elif signal.startswith("🔴") or "SHORT" in signal:
+                    short_results.append(result)
+                    self.logger.info(f"SHORT eklendi: {result.get('symbol')} - {signal}")
+            
+            # Debug: Kategorilere ayrılmış sonuçları logla
+            self.logger.info(f"LONG: {len(long_results)}, SHORT: {len(short_results)}")
+            
+            # Tüm sonuçlar için doğru sayıları göster
+            total_opportunities = len(long_results) + len(short_results)
             
             # Başlık ve açıklama
             header = (
                 "🔍 *ÇOK ZAMAN DİLİMLİ MARKET TARAMASI*\n\n"
                 f"🕒 _Tarama zamanı: {datetime.now().strftime('%H:%M:%S %d.%m.%Y')}_\n\n"
-                f"✅ *Bulunan fırsatlar: {len(filtered_results)}*\n\n"
+                f"✅ *Bulunan fırsatlar: {total_opportunities}* (LONG: {len(long_results)}, SHORT: {len(short_results)})\n\n"
             )
             
-            # Her sembol için özet bilgiler
-            results_text = []
+            # LONG fırsatları başlığı ve içeriği
+            long_section = ""
+            if long_results:
+                long_section = "🟩 *LONG (ALIŞ) FIRSATLARI*\n\n"
+                long_items = []
+                
+                for idx, result in enumerate(long_results, 1):
+                    symbol = result.get("symbol", "")
+                    score = result.get("opportunity_score", 0)
+                    price = result.get("current_price", 0)
+                    
+                    # Risk/Ödül ve stop/hedef bilgileri
+                    risk_reward = result.get("risk_reward", 0)
+                    stop_price = result.get("stop_price", 0)
+                    target_price = result.get("target_price", 0)
+                    
+                    # Trend bilgileri
+                    weekly_trend = result.get("weekly_trend", "UNKNOWN")
+                    h4_trend = result.get("h4_trend", "UNKNOWN")
+                    hourly_trend = result.get("hourly_trend", "UNKNOWN")
+                    m15_trend = result.get("15m_trend", "UNKNOWN")
+                    
+                    # Sonuç metni
+                    result_str = (
+                        f"{idx}. *{symbol}* (🟩 {score:.0f}/100)\n"
+                        f"💲 Fiyat: ${price:.4f}\n"
+                        f"📈 Trendler: 1W:{self._trend_emoji(weekly_trend)} 4H:{self._trend_emoji(h4_trend)} 1H:{self._trend_emoji(hourly_trend)} 15M:{self._trend_emoji(m15_trend)}\n"
+                    )
+                    
+                    # Stop ve hedef bilgileri (fiyat sıfırdan büyükse)
+                    if stop_price > 0 and target_price > 0:
+                        result_str += f"🎯 Hedef: ${target_price:.4f} "
+                        result_str += f"🛑 Stop: ${stop_price:.4f}\n"
+                        result_str += f"⚖️ Risk/Ödül: {risk_reward:.2f}\n"
+                    
+                    # Trend açıklamaları
+                    trend_descriptions = result.get("trend_descriptions", [])
+                    if trend_descriptions:
+                        # Sadece ilk 2 açıklamayı göster
+                        for desc in trend_descriptions[:2]:
+                            # Parantezleri ve özel karakterleri güvenli hale getir
+                            safe_desc = desc.replace("(", "[").replace(")", "]").replace("%", "%%")
+                            result_str += f"• {safe_desc}\n"
+                    
+                    long_items.append(result_str)
+                
+                long_section += "\n".join(long_items)
             
-            for idx, result in enumerate(top_results, 1):
-                symbol = result.get("symbol", "")
-                score = result.get("opportunity_score", 0)
-                signal = result.get("signal", "⚪ BEKLE")
-                price = result.get("current_price", 0)
+            # SHORT fırsatları başlığı ve içeriği
+            short_section = ""
+            if short_results:
+                short_section = "\n\n🔴 *SHORT (SATIŞ) FIRSATLARI*\n\n"
+                short_items = []
                 
-                # Risk/Ödül ve stop/hedef bilgileri
-                risk_reward = result.get("risk_reward", 0)
-                stop_price = result.get("stop_price", 0)
-                target_price = result.get("target_price", 0)
+                for idx, result in enumerate(short_results, 1):
+                    symbol = result.get("symbol", "")
+                    score = result.get("opportunity_score", 0)
+                    price = result.get("current_price", 0)
+                    
+                    # Risk/Ödül ve stop/hedef bilgileri
+                    risk_reward = result.get("risk_reward", 0)
+                    stop_price = result.get("stop_price", 0)
+                    target_price = result.get("target_price", 0)
+                    
+                    # Trend bilgileri
+                    weekly_trend = result.get("weekly_trend", "UNKNOWN")
+                    h4_trend = result.get("h4_trend", "UNKNOWN")
+                    hourly_trend = result.get("hourly_trend", "UNKNOWN")
+                    m15_trend = result.get("15m_trend", "UNKNOWN")
+                    
+                    # Sonuç metni
+                    result_str = (
+                        f"{idx}. *{symbol}* (🔴 {score:.0f}/100)\n"
+                        f"💲 Fiyat: ${price:.4f}\n"
+                        f"📉 Trendler: 1W:{self._trend_emoji(weekly_trend)} 4H:{self._trend_emoji(h4_trend)} 1H:{self._trend_emoji(hourly_trend)} 15M:{self._trend_emoji(m15_trend)}\n"
+                    )
+                    
+                    # Stop ve hedef bilgileri (fiyat sıfırdan büyükse)
+                    if stop_price > 0 and target_price > 0:
+                        result_str += f"🎯 Hedef: ${target_price:.4f} "
+                        result_str += f"🛑 Stop: ${stop_price:.4f}\n"
+                        result_str += f"⚖️ Risk/Ödül: {risk_reward:.2f}\n"
+                    
+                    # Trend açıklamaları
+                    trend_descriptions = result.get("trend_descriptions", [])
+                    if trend_descriptions:
+                        # Sadece ilk 2 açıklamayı göster
+                        for desc in trend_descriptions[:2]:
+                            # Parantezleri ve özel karakterleri güvenli hale getir
+                            safe_desc = desc.replace("(", "[").replace(")", "]").replace("%", "%%")
+                            result_str += f"• {safe_desc}\n"
+                    
+                    short_items.append(result_str)
                 
-                # Emoji belirle
-                emoji = "🟩" if signal.startswith("🟩") else "🔴" if signal.startswith("🔴") else "⚪"
-                
-                # Sonuç metni
-                result_str = (
-                    f"{idx}. *{symbol}* ({emoji} {score:.0f}/100)\n"
-                    f"💲 Fiyat: ${price:.4f}\n"
-                    f"📊 Sinyal: {signal}\n"
-                )
-                
-                # Stop ve hedef bilgileri (fiyat sıfırdan büyükse)
-                if stop_price > 0 and target_price > 0:
-                    # Parantez karakterlerini [] ile değiştir - Telegram'da sorun çıkartabilir
-                    result_str += f"🎯 Hedef: ${target_price:.4f} "
-                    result_str += f"🛑 Stop: ${stop_price:.4f}\n"
-                    result_str += f"⚖️ Risk/Ödül: {risk_reward:.2f}\n"
-                
-                # Trend açıklamaları - burada önemli: Markdown/HTML karakterlerini temizle
-                trend_descriptions = result.get("trend_descriptions", [])
-                if trend_descriptions:
-                    # Sadece ilk 3 açıklamayı göster
-                    for desc in trend_descriptions[:3]:
-                        # Parantezleri ve özel karakterleri güvenli hale getir
-                        # "text (info)" formatındaki metinler için özel işlem
-                        safe_desc = desc.replace("(", "[").replace(")", "]")
-                        # Yüzdelik işaretleri ve diğer özel karakterler
-                        safe_desc = safe_desc.replace("%", "%%")
-                        result_str += f"{safe_desc}\n"
-                
-                results_text.append(result_str)
+                short_section += "\n".join(short_items)
             
-            # Sonuçları birleştir ve not ekle
-            final_text = header + "\n".join(results_text)
+            # Fırsat yoksa mesaj
+            if not long_section and not short_section:
+                combined_section = "⚠️ Şu anda işlem için uygun bir alım/satım fırsatı bulunamadı."
+            else:
+                combined_section = long_section + short_section
             
             # Footer
             footer = (
                 "\n\n💡 *Nasıl Kullanılır:*\n"
-                "- Sinyal sonuçları 3 zaman diliminden (1W, 1H, 15M) gelen analizleri birleştirir\n"
-                "- 🟩: LONG (Alım), 🔴: SHORT (Satım), ⚪: BEKLE\n"
-                "- Tek bir sembol için detaylı analiz: /multi + sembol (örn: /multi BTCUSDT)\n"
+                "- Analiz 4 zaman dilimini (1W, 4H, 1H, 15M) birleştirir\n"
+                "- 🟩: LONG pozisyon (alım fırsatı), 🔴: SHORT pozisyon (satış fırsatı)\n"
+                "- Tek bir sembol için: /multiscan + sembol (örn: /multiscan BTCUSDT)\n"
+                "- 🔄 Yenile butonuyla güncel fırsatları görebilirsiniz\n"
             )
             
-            return final_text + footer
+            return header + combined_section + footer
         
         except Exception as e:
             self.logger.error(f"Sonuç formatlarken hata: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
             return "❌ Sonuçları formatlarken hata oluştu."
+
+    def _trend_emoji(self, trend):
+        """Trend durumuna göre emoji döndürür"""
+        if trend == "STRONGLY_BULLISH":
+            return "🟢🟢"
+        elif trend == "BULLISH":
+            return "🟢"
+        elif trend == "STRONGLY_BEARISH":
+            return "🔴🔴"
+        elif trend == "BEARISH":
+            return "🔴"
+        elif trend == "NEUTRAL":
+            return "⚪"
+        else:
+            return "❓"
