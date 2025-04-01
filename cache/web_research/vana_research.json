@@ -1,0 +1,32 @@
+{
+  "symbol": "VANA",
+  "full_name": "Vana",
+  "description": "Vana is an EVM-compatible Layer 1 blockchain network that enables users to transform personal data into financial assets by aggregating private datasets for AI model training. This approach allows individuals to tokenize and monetize their data through Data Decentralized Autonomous Organizations (Data DAOs), granting them ownership and control over their digital footprints. \r\nVANA DOCS\r\n\r\nKey Features of Vana:\r\n\r\nData Liquidity Pools (DLPs): Vana introduces Data Liquidity Pools, where users can contribute data, which is then validated and tokenized. These pools facilitate the creation of data tokens, representing ownership and value of the contributed data. \r\nVANA DOCS\r\n\r\nProof of Contribution: To ensure data quality and integrity, Vana employs a Proof-of-Contribution system. This mechanism validates data submissions, ensuring they meet the standards required by the network. \r\nVANA DOCS\r\n\r\nIncentive Structures: Participants in the Vana ecosystem, including data contributors, validators, and DLP creators, are rewarded with $VANA tokens. This incentivizes active participation and the provision of high-quality data. \r\nVANA DOCS",
+  "website": "https://www.vana.org/",
+  "github": "https://github.com/vana-com",
+  "twitter": "vana",
+  "reddit": "https://www.reddit.com",
+  "team": [],
+  "market_data": {
+    "current_price": 7.469886971916924,
+    "market_cap": 230037920.7525111,
+    "volume": 87932594.65396217,
+    "price_change_30d": -18.722312799547314
+  },
+  "news": [],
+  "sentiment": {},
+  "project_metrics": {},
+  "analysis_summary": "Project Overview: Vana is an EVM-compatible Layer 1 blockchain network that enables users to transform personal data into financial assets by aggregating private datasets for AI model training. This approach allows individuals to tokenize and monetize their data through Data Decentralized Autonomous Organizations (Data DAOs), granting them ownership and control over their digital footprints. \r\nVANA DOCS\r\n\r\nKey Features of Vana:\r\n\r\nData Liquidity Pools (DLPs): Vana introduces Data Liquidity Pools, where users can ...\n\nMarket Data: Current price: $7.4699. Market cap: $230,037,921. Price change (30d): 18.72% down.\n\nCommunity & Development: 355,649 Twitter followers. ",
+  "last_updated": "2025-03-27T22:45:41.118346",
+  "social_metrics": {
+    "twitter_followers": 355649,
+    "reddit_subscribers": 0,
+    "telegram_users": 54207
+  },
+  "developer_activity": {
+    "github_stars": 0,
+    "github_subscribers": 0,
+    "github_contributors": 0,
+    "github_commits_4_weeks": 0
+  }
+}

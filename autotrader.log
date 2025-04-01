@@ -1,0 +1,913 @@
+2025-03-28 04:16:25,857 - AutoTrader - INFO - Otomatik Kaldıraçlı İşlem Sistemi başlatılıyor
+2025-03-28 04:16:25,895 - AutoTrader - INFO - Telegram bot yüklendi, chat_id: 7293799547
+2025-03-28 04:16:32,227 - AutoTrader - INFO - Binance API bağlantısı başarılı. Futures bakiyesi: Bulunamadı
+2025-03-28 04:16:32,231 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *Otomatik Kaldıraçlı İşlem Sistemi Başlatıldı*
+
+...
+2025-03-28 04:16:32,231 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:16:32,232 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:16:55,456 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:16:58,521 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:02,523 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:05,739 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:09,883 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:13,828 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:17,002 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:29,496 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:32,671 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:35,921 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:38,866 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:41,917 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:45,994 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:49,123 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:53,041 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:56,535 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:17:59,710 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:18:03,802 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:18:07,399 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:18:10,707 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:18:14,188 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:18:14,189 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:18:14,548 - AutoTrader - ERROR - Yetersiz bakiye: 0 USDT. En az 10 USDT gerekli.
+2025-03-28 04:18:14,548 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:19:39,610 - AutoTrader - INFO - Program kullanıcı tarafından durduruldu.
+2025-03-28 04:19:50,866 - AutoTrader - INFO - Otomatik Kaldıraçlı İşlem Sistemi başlatılıyor
+2025-03-28 04:19:50,890 - AutoTrader - INFO - Telegram bot yüklendi, chat_id: 7293799547
+2025-03-28 04:19:51,495 - AutoTrader - ERROR - Futures bakiyesi alınırken hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743124790894&recvWindow=60000&signature=82066d5c7ba75bd3343a683a6ec977a4aa737e602adb48cc78bd977f6ce793e4 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>
+2025-03-28 04:19:56,638 - AutoTrader - INFO - Binance API bağlantısı başarılı. USDT bakiyesi: 66.56316599
+2025-03-28 04:19:56,641 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *Otomatik Kaldıraçlı İşlem Sistemi Başlatıldı*
+
+...
+2025-03-28 04:19:56,641 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:19:56,641 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:20:15,994 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:20:20,681 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:24,877 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:28,945 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:32,582 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:37,133 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:40,916 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:44,531 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:48,270 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:51,944 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:20:56,337 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:00,188 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:03,823 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:07,712 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:11,386 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:15,852 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:19,874 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:23,620 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:26,573 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:29,770 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:33,307 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:21:33,308 - AutoTrader - INFO - Toplam 2 fırsat bulundu
+2025-03-28 04:21:33,715 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743124893244&recvWindow=60000&signature=9ca2fc8a29aec17285ebc3dda04ef0aba9c2d2d6cc110de71894739f9f22cb4a 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 04:21:35,074 - AutoTrader - INFO - CRV/USDT:USDT için kaldıraç 3x olarak ayarlandı
+2025-03-28 04:21:35,400 - AutoTrader - INFO - CRV/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 04:21:35,400 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 04:21:35,400 - AutoTrader - INFO - İşlem parametreleri: Sembol=CRV/USDT:USDT, Yön=buy, Miktar=20.304569, Fiyat=0.591, TP=0.7687499999999999, SL=0.53175
+2025-03-28 04:21:35,763 - AutoTrader - INFO - Market emri gönderildi: 41019846195
+2025-03-28 04:21:35,766 - AutoTrader - INFO - Pozisyon açıldı: CRV/USDT:USDT BUY - Kaldıraç: 3x - Giriş: 0.591 - TP: 0.7687499999999999 - SL: 0.53175
+2025-03-28 04:21:35,767 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: CRV/USDT:USDT
+📈 Yön...
+2025-03-28 04:21:35,767 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:26:37,243 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:26:37,245 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:26:55,468 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:26:58,910 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:02,792 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:06,334 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:10,799 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:14,150 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:17,211 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:21,204 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:24,911 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:29,569 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:33,154 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:36,941 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:40,310 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:43,498 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:47,084 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:51,088 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:54,447 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:27:58,075 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:28:01,186 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:28:04,379 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:28:07,280 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:28:07,280 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:28:07,624 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743125287216&recvWindow=60000&signature=4f7b671da81efde22ac2d4da3beb8012ffd568634b181bea6a02b124e0fb3b0e 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 04:28:09,025 - AutoTrader - INFO - BNB/USDT:USDT için kaldıraç 4x olarak ayarlandı
+2025-03-28 04:28:09,363 - AutoTrader - INFO - BNB/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 04:28:09,364 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 04:28:09,364 - AutoTrader - INFO - İşlem parametreleri: Sembol=BNB/USDT:USDT, Yön=buy, Miktar=0.018906, Fiyat=634.72, TP=729.7889285714285, SL=603.0303571428572
+2025-03-28 04:28:09,717 - AutoTrader - INFO - Market emri gönderildi: 68106050573
+2025-03-28 04:28:09,719 - AutoTrader - INFO - Pozisyon açıldı: BNB/USDT:USDT BUY - Kaldıraç: 4x - Giriş: 634.72 - TP: 729.7889285714285 - SL: 603.0303571428572
+2025-03-28 04:28:09,720 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: BNB/USDT:USDT
+📈 Yön...
+2025-03-28 04:28:09,720 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:33:11,578 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:33:11,580 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:33:30,829 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:33:41,328 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:33:45,948 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:33:49,875 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:33:53,564 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:33:57,651 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:01,067 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:05,404 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:08,984 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:15,233 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:18,169 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:21,890 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:25,943 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:28,686 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:32,683 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:35,847 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:39,746 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:43,534 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:47,317 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:51,113 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:54,721 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:34:54,722 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:34:55,098 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743125694658&recvWindow=60000&signature=f381383cb748493edbfc623f9486e4761544c8fee2ed39d394ba4737bd01e26a 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 04:34:56,641 - AutoTrader - INFO - MKR/USDT:USDT için kaldıraç 3x olarak ayarlandı
+2025-03-28 04:34:57,005 - AutoTrader - INFO - MKR/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 04:34:57,005 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 04:34:57,006 - AutoTrader - INFO - İşlem parametreleri: Sembol=MKR/USDT:USDT, Yön=buy, Miktar=0.008119, Fiyat=1478.1, TP=1808.2392857142856, SL=1368.0535714285713
+2025-03-28 04:34:57,459 - AutoTrader - INFO - Market emri gönderildi: 9307866212
+2025-03-28 04:34:57,462 - AutoTrader - INFO - Pozisyon açıldı: MKR/USDT:USDT BUY - Kaldıraç: 3x - Giriş: 1478.1 - TP: 1808.2392857142856 - SL: 1368.0535714285713
+2025-03-28 04:34:57,462 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: MKR/USDT:USDT
+📈 Yön...
+2025-03-28 04:34:57,462 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:39:59,236 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:39:59,238 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:40:18,286 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'EOS/USDT:USDT', 'XLM/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:40:21,310 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:25,035 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:28,937 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:32,832 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:36,748 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:40,198 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:43,877 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:47,585 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:52,361 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:55,756 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:40:59,041 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:02,420 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:06,113 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:09,664 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:13,145 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:16,936 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:19,971 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:22,831 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:27,671 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:30,685 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:41:30,686 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:41:30,686 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:46:32,860 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:46:32,862 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:46:52,495 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'EOS/USDT:USDT', 'XLM/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:46:56,310 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:00,540 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:04,062 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:07,376 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:10,616 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:14,072 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:17,704 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:20,998 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:24,146 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:27,952 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:31,629 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:34,497 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:37,386 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:40,750 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:43,617 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:47,919 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:51,345 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:54,569 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:47:57,878 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:48:01,728 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:48:01,729 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:48:01,729 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:53:03,930 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:53:03,932 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:53:25,117 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:53:28,909 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:33,116 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:36,086 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:40,208 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:44,378 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:48,080 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:51,744 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:55,028 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:53:58,307 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:01,377 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:05,166 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:09,099 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:13,053 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:16,533 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:19,810 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:24,383 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:28,718 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:32,379 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:35,888 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:38,961 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:54:38,962 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:54:38,962 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 04:56:30,476 - AutoTrader - INFO - Otomatik Kaldıraçlı İşlem Sistemi başlatılıyor
+2025-03-28 04:56:30,513 - AutoTrader - INFO - Telegram bot yüklendi, chat_id: 7293799547
+2025-03-28 04:56:31,962 - AutoTrader - ERROR - Futures bakiyesi alınırken hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743126990517&recvWindow=60000&signature=965332ba6219d51cb64ce6950d663836a045dfd3150c91686e5ae3bede6aa441 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>
+2025-03-28 04:56:37,646 - AutoTrader - INFO - Binance API bağlantısı başarılı. USDT bakiyesi: 40.06623804
+2025-03-28 04:56:37,651 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *Otomatik Kaldıraçlı İşlem Sistemi Başlatıldı*
+
+...
+2025-03-28 04:56:37,651 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 04:56:37,652 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 04:57:01,630 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'XLM/USDT:USDT', 'EOS/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 04:57:05,110 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:09,344 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:14,193 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:18,665 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:22,494 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:26,284 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:30,684 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:34,780 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:39,146 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:43,173 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:47,081 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:51,064 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:54,649 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 04:57:58,698 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:02,058 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:06,015 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:09,719 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:13,490 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:17,937 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:22,029 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 04:58:22,030 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 04:58:22,401 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743127101937&recvWindow=60000&signature=3cb6789a8a90a8c33609674afb0820020ca6fac944b51ec079d946e3c88435ec 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 04:58:23,875 - AutoTrader - INFO - BNB/USDT:USDT için kaldıraç 4x olarak ayarlandı
+2025-03-28 04:58:24,237 - AutoTrader - INFO - BNB/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 04:58:24,238 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 04:58:24,238 - AutoTrader - INFO - İşlem parametreleri: Sembol=BNB/USDT:USDT, Yön=buy, Miktar=0.018864, Fiyat=636.13, TP=731.1989285714285, SL=604.4403571428571
+2025-03-28 04:58:24,612 - AutoTrader - INFO - Market emri gönderildi: 68106602341
+2025-03-28 04:58:24,615 - AutoTrader - INFO - Pozisyon açıldı: BNB/USDT:USDT BUY - Kaldıraç: 4x - Giriş: 636.13 - TP: 731.1989285714285 - SL: 604.4403571428571
+2025-03-28 04:58:24,616 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: BNB/USDT:USDT
+📈 Yön...
+2025-03-28 04:58:24,616 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 05:03:25,845 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 05:03:25,847 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 05:03:45,764 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'EOS/USDT:USDT', 'XLM/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 05:03:49,078 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:03:53,495 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 05:03:57,116 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:00,956 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:05,050 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:08,738 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:12,365 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:15,538 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:19,791 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:23,040 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:27,263 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:31,676 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:36,084 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:40,270 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:44,535 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:48,198 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:51,865 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:55,240 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 05:04:59,336 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 05:05:02,252 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 05:05:02,253 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 05:05:02,702 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743127502160&recvWindow=60000&signature=0b8871c9fcf9d2292312177d6c4e48a071b5e3e20182422ab24f867a626d5d09 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 05:05:04,397 - AutoTrader - INFO - CRV/USDT:USDT için kaldıraç 3x olarak ayarlandı
+2025-03-28 05:05:05,671 - AutoTrader - INFO - CRV/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 05:05:05,671 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 05:05:05,672 - AutoTrader - INFO - İşlem parametreleri: Sembol=CRV/USDT:USDT, Yön=buy, Miktar=20.58319, Fiyat=0.583, TP=0.7610714285714286, SL=0.5236428571428571
+2025-03-28 05:05:06,082 - AutoTrader - INFO - Market emri gönderildi: 41020499224
+2025-03-28 05:05:06,085 - AutoTrader - INFO - Pozisyon açıldı: CRV/USDT:USDT BUY - Kaldıraç: 3x - Giriş: 0.583 - TP: 0.7610714285714286 - SL: 0.5236428571428571
+2025-03-28 05:05:06,085 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: CRV/USDT:USDT
+📈 Yön...
+2025-03-28 05:05:06,086 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 05:10:07,961 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 05:10:07,962 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 05:10:27,478 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'EOS/USDT:USDT', 'XLM/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 05:10:30,958 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:35,423 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:39,683 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:44,245 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:48,512 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:51,709 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:55,169 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 05:10:59,163 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:02,644 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:05,926 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:10,528 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:14,217 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:18,050 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:22,281 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:25,322 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:28,547 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:32,032 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:35,666 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:38,998 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:42,968 - AutoTrader - INFO - ALGO için haber duyarlılık skoru: 0.2
+2025-03-28 05:11:42,969 - AutoTrader - INFO - Toplam 4 fırsat bulundu
+2025-03-28 05:11:43,334 - AutoTrader - WARNING - FAPI bakiye kontrolünde hata: binance GET https://fapi.binance.com/fapi/v1/balance?timestamp=1743127902877&recvWindow=60000&signature=2f26cd4a1d61dc8251c1ce635c9f4d0fa6160d67aab74b3e1f8abff90db95f46 404 Not Found <!DOCTYPE html>
+<!-- saved from url=(0032)https://www.binance.com/en/error -->
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+  <meta name="format-detection" content="telephone=no,email=no,address=no">
+  <title>Binance</title>
+  <link rel="Shortcut Icon" href="https://www.binance.com/en/favicon.ico">
+  <style>
+    body {
+      margin: 0
+    }
+
+    .img {
+      width: 611px;
+      margin: 68px auto 0
+    }
+
+    .info {
+      width: 370px;
+      margin: 0 auto;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    .info h3 {
+      margin: 0;
+      font-size: 25px;
+      color: #333;
+      font-weight: normal;
+    }
+
+    .info p {
+      font-size: 14px;
+      font-family: Arial;
+      color: #333;
+      line-height: 18px;
+      margin: 0
+    }
+
+    .info button {
+      margin-top: 20px;
+      width: 231px;
+      height: 34px;
+      background: #FFFFFF;
+      border: 1px solid #F0B90B;
+      box-sizing: border-box;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 16px;
+      color: #F0B90B;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="img"><img alt="" src="/errorPages/404.jpg"></div>
+  <div class="info">
+    <h3>出错啦！您访问的网页不存在。</h3>
+    <p>Sorry! The page you’re looking for cannot be found.</p>
+    <a href="https://www.binance.com">
+      <button>Return to Binance home page</button>
+    </a>
+  </div>
+
+</body>
+
+</html>, standart yöntem deneniyor...
+2025-03-28 05:11:44,786 - AutoTrader - INFO - MKR/USDT:USDT için kaldıraç 3x olarak ayarlandı
+2025-03-28 05:11:45,158 - AutoTrader - INFO - MKR/USDT:USDT için margin modu 'cross' olarak ayarlandı
+2025-03-28 05:11:45,158 - AutoTrader - WARNING - Market bilgisi alınamadı, varsayılan precision kullanılacak: 'float' object cannot be interpreted as an integer
+2025-03-28 05:11:45,159 - AutoTrader - INFO - İşlem parametreleri: Sembol=MKR/USDT:USDT, Yön=buy, Miktar=0.008149, Fiyat=1472.5, TP=1804.2142857142858, SL=1361.9285714285716
+2025-03-28 05:11:45,522 - AutoTrader - INFO - Market emri gönderildi: 9308163023
+2025-03-28 05:11:45,524 - AutoTrader - INFO - Pozisyon açıldı: MKR/USDT:USDT BUY - Kaldıraç: 3x - Giriş: 1472.5 - TP: 1804.2142857142858 - SL: 1361.9285714285716
+2025-03-28 05:11:45,524 - AutoTrader - INFO - Telegram mesajı gönderildi: 🚀 *POZİSYON AÇILDI*
+
+💰 Sembol: MKR/USDT:USDT
+📈 Yön...
+2025-03-28 05:11:45,525 - AutoTrader - INFO - 300 saniye bekleniyor...
+2025-03-28 05:16:47,131 - AutoTrader - INFO - Piyasa taraması başlatılıyor
+2025-03-28 05:16:47,132 - AutoTrader - INFO - Toplam 423 USDT çifti bulundu
+2025-03-28 05:17:07,148 - AutoTrader - INFO - En yüksek hacimli 20 sembol: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 'CRV/USDT:USDT', 'LINK/USDT:USDT', 'LTC/USDT:USDT', 'BCH/USDT:USDT', 'DOT/USDT:USDT', 'MKR/USDT:USDT', 'TRX/USDT:USDT', 'WAVES/USDT:USDT', 'EOS/USDT:USDT', 'XLM/USDT:USDT', 'ETC/USDT:USDT', 'ATOM/USDT:USDT', 'ALGO/USDT:USDT']
+2025-03-28 05:17:10,794 - AutoTrader - INFO - BTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:14,340 - AutoTrader - INFO - ETH için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:17,751 - AutoTrader - INFO - SOL için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:22,264 - AutoTrader - INFO - XRP için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:26,678 - AutoTrader - INFO - DOGE için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:30,676 - AutoTrader - INFO - BNB için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:34,545 - AutoTrader - INFO - ADA için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:38,025 - AutoTrader - INFO - CRV için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:42,479 - AutoTrader - INFO - LINK için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:46,731 - AutoTrader - INFO - LTC için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:51,194 - AutoTrader - INFO - BCH için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:54,612 - AutoTrader - INFO - DOT için haber duyarlılık skoru: 0.2
+2025-03-28 05:17:59,121 - AutoTrader - INFO - MKR için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:04,241 - AutoTrader - INFO - TRX için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:07,511 - AutoTrader - INFO - WAVES için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:11,307 - AutoTrader - INFO - EOS için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:14,264 - AutoTrader - INFO - XLM için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:17,354 - AutoTrader - INFO - ETC için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:21,307 - AutoTrader - INFO - ATOM için haber duyarlılık skoru: 0.2
+2025-03-28 05:18:22,553 - AutoTrader - INFO - Program kullanıcı tarafından durduruldu.

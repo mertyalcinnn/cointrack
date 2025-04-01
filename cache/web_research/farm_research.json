@@ -1,0 +1,32 @@
+{
+  "symbol": "FARM",
+  "full_name": "FARM",
+  "description": "Mootrack is a cattle-raising registry platform and marketplace that integrates Solana blockchain technology to modernize livestock trading. \r\nThe platform is designed to facilitate seamless connections between cattle buyers and sellers, ensuring transparency and efficiency. \r\nThe $FARM token is powering subscriptions and enabling users to access premium features. Mootrack's objective is to redefine outdated livestock trading practices by providing a secure, blockchain-based solution that benefits all stakeholders involved in the cattle industry.",
+  "website": "https://mootrack.xyz",
+  "github": "https://github.com/hhenrikson",
+  "twitter": "mootrack_xyz",
+  "reddit": null,
+  "team": [],
+  "market_data": {
+    "current_price": 5.801734773307031e-05,
+    "market_cap": 57998.90143844343,
+    "volume": 37.32049873402258,
+    "price_change_30d": -39.62762389667358
+  },
+  "news": [],
+  "sentiment": {},
+  "project_metrics": {},
+  "analysis_summary": "Project Overview: Mootrack is a cattle-raising registry platform and marketplace that integrates Solana blockchain technology to modernize livestock trading. \r\nThe platform is designed to facilitate seamless connections between cattle buyers and sellers, ensuring transparency and efficiency. \r\nThe $FARM token is powering subscriptions and enabling users to access premium features. Mootrack's objective is to redefine outdated livestock trading practices by providing a secure, blockchain-based solution that benefit...\n\nMarket Data: Current price: $0.0001. Market cap: $57,999. Price change (30d): 39.63% down.\n\nCommunity & Development: 1,788 Twitter followers. ",
+  "last_updated": "2025-03-27T22:11:04.275736",
+  "social_metrics": {
+    "twitter_followers": 1788,
+    "reddit_subscribers": 0,
+    "telegram_users": 355
+  },
+  "developer_activity": {
+    "github_stars": 0,
+    "github_subscribers": 0,
+    "github_contributors": 0,
+    "github_commits_4_weeks": 0
+  }
+}

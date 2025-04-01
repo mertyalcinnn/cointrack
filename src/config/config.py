@@ -1,0 +1,2 @@
+# API anahtarlarını güvenli bir şekilde yapılandır
+ANTHROPIC_API_KEY = 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 API anahtarınızı buraya ekleyin 

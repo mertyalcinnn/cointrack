@@ -1,0 +1,32 @@
+{
+  "symbol": "XUSD",
+  "full_name": "xUSD",
+  "description": "xUSD is a stable coin pegged to the US Dollar. It\u2019s created by burning the equivalent USD value of XHV. It is the only currency that can be converted into xAssets, so it acts as a gateway between XHV and xAssets.",
+  "website": "https://havenprotocol.org/",
+  "github": "https://github.com/haven-protocol-org/haven-offshore",
+  "twitter": "HavenXHV",
+  "reddit": "https://www.reddit.com/r/havenprotocol/",
+  "team": [],
+  "market_data": {
+    "current_price": 0.0004984454808079662,
+    "market_cap": 0.0,
+    "volume": 587.9680986531574,
+    "price_change_30d": 51.184767215184415
+  },
+  "news": [],
+  "sentiment": {},
+  "project_metrics": {},
+  "analysis_summary": "Project Overview: xUSD is a stable coin pegged to the US Dollar. It\u2019s created by burning the equivalent USD value of XHV. It is the only currency that can be converted into xAssets, so it acts as a gateway between XHV and xAssets.\n\nMarket Data: Current price: $0.0005. Price change (30d): 51.18% up.\n\nCommunity & Development: 27,891 Twitter followers. ",
+  "last_updated": "2025-03-27T21:59:07.132884",
+  "social_metrics": {
+    "twitter_followers": 27891,
+    "reddit_subscribers": 0,
+    "telegram_users": 2
+  },
+  "developer_activity": {
+    "github_stars": 23,
+    "github_subscribers": 4,
+    "github_contributors": 0,
+    "github_commits_4_weeks": 0
+  }
+}

@@ -1,0 +1,200 @@
+[
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "BNB/USDT:USDT",
+            "id": "68104787956",
+            "side": "buy",
+            "amount": 0.5514329378771408,
+            "entry_price": 634.71,
+            "take_profit": 652.8445714285714,
+            "stop_loss": 627.4561714285715,
+            "leverage": 7,
+            "opened_at": "2025-03-28T03:27:58.748280",
+            "opportunity": {
+                "symbol": "BNB/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 80,
+                "tech_signal": "STRONG_LONG",
+                "total_score": 110,
+                "timestamp": "2025-03-28T03:27:19.874968"
+            }
+        },
+        "timestamp": "2025-03-28T03:27:58.748329"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "BNB/USDT:USDT",
+            "id": "68105126197",
+            "side": "buy",
+            "amount": 0.5517893741131957,
+            "entry_price": 634.3,
+            "take_profit": 652.4228571428571,
+            "stop_loss": 627.0508571428571,
+            "leverage": 7,
+            "opened_at": "2025-03-28T03:40:11.370852",
+            "opportunity": {
+                "symbol": "BNB/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 85,
+                "tech_signal": "STRONG_LONG",
+                "total_score": 115,
+                "timestamp": "2025-03-28T03:39:29.797381"
+            }
+        },
+        "timestamp": "2025-03-28T03:40:11.371880"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "CRV/USDT:USDT",
+            "id": "41019846195",
+            "side": "buy",
+            "amount": 20.304569,
+            "entry_price": 0.591,
+            "take_profit": 0.7687499999999999,
+            "stop_loss": 0.53175,
+            "leverage": 3,
+            "opened_at": "2025-03-28T04:21:35.764168",
+            "opportunity": {
+                "symbol": "CRV/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 85,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 117.0,
+                "timestamp": "2025-03-28T04:20:48.270818"
+            }
+        },
+        "timestamp": "2025-03-28T04:21:35.765103"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "BNB/USDT:USDT",
+            "id": "68106050573",
+            "side": "buy",
+            "amount": 0.018906,
+            "entry_price": 634.72,
+            "take_profit": 729.7889285714285,
+            "stop_loss": 603.0303571428572,
+            "leverage": 4,
+            "opened_at": "2025-03-28T04:28:09.718041",
+            "opportunity": {
+                "symbol": "BNB/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 85,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 117.0,
+                "timestamp": "2025-03-28T04:27:17.212143"
+            }
+        },
+        "timestamp": "2025-03-28T04:28:09.718655"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "MKR/USDT:USDT",
+            "id": "9307866212",
+            "side": "buy",
+            "amount": 0.008119,
+            "entry_price": 1478.1,
+            "take_profit": 1808.2392857142856,
+            "stop_loss": 1368.0535714285713,
+            "leverage": 3,
+            "opened_at": "2025-03-28T04:34:57.460281",
+            "opportunity": {
+                "symbol": "MKR/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 80,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 112.0,
+                "timestamp": "2025-03-28T04:34:28.687698"
+            }
+        },
+        "timestamp": "2025-03-28T04:34:57.460874"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "BNB/USDT:USDT",
+            "id": "68106602341",
+            "side": "buy",
+            "amount": 0.018864,
+            "entry_price": 636.13,
+            "take_profit": 731.1989285714285,
+            "stop_loss": 604.4403571428571,
+            "leverage": 4,
+            "opened_at": "2025-03-28T04:58:24.612744",
+            "opportunity": {
+                "symbol": "BNB/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 85,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 117.0,
+                "timestamp": "2025-03-28T04:57:26.285316"
+            }
+        },
+        "timestamp": "2025-03-28T04:58:24.614402"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "CRV/USDT:USDT",
+            "id": "41020499224",
+            "side": "buy",
+            "amount": 20.58319,
+            "entry_price": 0.583,
+            "take_profit": 0.7610714285714286,
+            "stop_loss": 0.5236428571428571,
+            "leverage": 3,
+            "opened_at": "2025-03-28T05:05:06.083206",
+            "opportunity": {
+                "symbol": "CRV/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 85,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 117.0,
+                "timestamp": "2025-03-28T05:04:15.538956"
+            }
+        },
+        "timestamp": "2025-03-28T05:05:06.083830"
+    },
+    {
+        "action": "OPEN",
+        "position": {
+            "symbol": "MKR/USDT:USDT",
+            "id": "9308163023",
+            "side": "buy",
+            "amount": 0.008149,
+            "entry_price": 1472.5,
+            "take_profit": 1804.2142857142858,
+            "stop_loss": 1361.9285714285716,
+            "leverage": 3,
+            "opened_at": "2025-03-28T05:11:45.522719",
+            "opportunity": {
+                "symbol": "MKR/USDT:USDT",
+                "direction": "LONG",
+                "ai_recommendation": "AL",
+                "ai_confidence": 80,
+                "tech_signal": "STRONG_LONG",
+                "news_sentiment": 0.2,
+                "total_score": 112.0,
+                "timestamp": "2025-03-28T05:11:18.051749"
+            }
+        },
+        "timestamp": "2025-03-28T05:11:45.523182"
+    }
+]
