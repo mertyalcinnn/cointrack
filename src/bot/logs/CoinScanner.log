@@ -44557,3 +44557,155 @@ TypeError: MarketAnalyzer.analyze_opportunity() takes from 2 to 3 positional arg
 2025-04-01 06:30:32 - CoinScanner - INFO - 
 ==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====
 
+2025-04-01 06:37:17 - CoinScanner - INFO - 4 saatlik tarama başlatıldı - 7293799547 (tip: default)
+2025-04-01 06:37:17 - CoinScanner - INFO - 4 saatlik tarama başlatıldı - 7293799547 (tip: default)
+2025-04-01 06:37:17 - CoinScanner - INFO - 4 saatlik tarama başlatıldı - 7293799547 (tip: default)
+2025-04-01 06:37:17 - CoinScanner - INFO - 4 saatlik tarama başlatıldı - 7293799547 (tip: default)
+2025-04-01 06:37:17 - CoinScanner - INFO - 
+
+==== 📊 ÇOKLU İŞLEMCİ TARAMA BAŞLATILIYOR ====
+2025-04-01 06:37:17 - CoinScanner - INFO - 
+
+==== 📊 ÇOKLU İŞLEMCİ TARAMA BAŞLATILIYOR ====
+2025-04-01 06:37:17 - CoinScanner - INFO - 
+
+==== 📊 ÇOKLU İŞLEMCİ TARAMA BAŞLATILIYOR ====
+2025-04-01 06:37:17 - CoinScanner - INFO - 
+
+==== 📊 ÇOKLU İŞLEMCİ TARAMA BAŞLATILIYOR ====
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin verisi alındı
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin verisi alındı
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin verisi alındı
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin verisi alındı
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔄 Tarama 10 işlemci ile yapılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔄 Tarama 10 işlemci ile yapılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔄 Tarama 10 işlemci ile yapılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔄 Tarama 10 işlemci ile yapılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - ⏰ Tahmini eski süre: ~606.6 saniye olacaktı (tek işlemci ile)
+2025-04-01 06:37:23 - CoinScanner - INFO - ⏰ Tahmini eski süre: ~606.6 saniye olacaktı (tek işlemci ile)
+2025-04-01 06:37:23 - CoinScanner - INFO - ⏰ Tahmini eski süre: ~606.6 saniye olacaktı (tek işlemci ile)
+2025-04-01 06:37:23 - CoinScanner - INFO - ⏰ Tahmini eski süre: ~606.6 saniye olacaktı (tek işlemci ile)
+2025-04-01 06:37:23 - CoinScanner - INFO - 🚀 Çoklu işlemci analizi başlatılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🚀 Çoklu işlemci analizi başlatılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🚀 Çoklu işlemci analizi başlatılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🚀 Çoklu işlemci analizi başlatılıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin 10 işlemci ile taranıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin 10 işlemci ile taranıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin 10 işlemci ile taranıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🔍 Toplam 3033 coin 10 işlemci ile taranıyor...
+2025-04-01 06:37:23 - CoinScanner - INFO - 🖥️  Sistem toplam CPU sayısı: 11
+2025-04-01 06:37:23 - CoinScanner - INFO - 🖥️  Sistem toplam CPU sayısı: 11
+2025-04-01 06:37:23 - CoinScanner - INFO - 🖥️  Sistem toplam CPU sayısı: 11
+2025-04-01 06:37:23 - CoinScanner - INFO - 🖥️  Sistem toplam CPU sayısı: 11
+2025-04-01 06:37:23 - CoinScanner - INFO - 📊 Toplam 507 geçerli USDT çifti bulundu (blacklist'ten 61 coin filtrelendi)
+2025-04-01 06:37:23 - CoinScanner - INFO - 📊 Toplam 507 geçerli USDT çifti bulundu (blacklist'ten 61 coin filtrelendi)
+2025-04-01 06:37:23 - CoinScanner - INFO - 📊 Toplam 507 geçerli USDT çifti bulundu (blacklist'ten 61 coin filtrelendi)
+2025-04-01 06:37:23 - CoinScanner - INFO - 📊 Toplam 507 geçerli USDT çifti bulundu (blacklist'ten 61 coin filtrelendi)
+2025-04-01 06:37:23 - CoinScanner - INFO - 📌 Filtreleme sonrası 400 coin analiz edilecek
+2025-04-01 06:37:23 - CoinScanner - INFO - 📌 Filtreleme sonrası 400 coin analiz edilecek
+2025-04-01 06:37:23 - CoinScanner - INFO - 📌 Filtreleme sonrası 400 coin analiz edilecek
+2025-04-01 06:37:23 - CoinScanner - INFO - 📌 Filtreleme sonrası 400 coin analiz edilecek
+2025-04-01 06:37:23 - CoinScanner - INFO - 🛠️  10 batch oluşturuldu (işlemci başına ~40.0 coin)
+2025-04-01 06:37:23 - CoinScanner - INFO - 🛠️  10 batch oluşturuldu (işlemci başına ~40.0 coin)
+2025-04-01 06:37:23 - CoinScanner - INFO - 🛠️  10 batch oluşturuldu (işlemci başına ~40.0 coin)
+2025-04-01 06:37:23 - CoinScanner - INFO - 🛠️  10 batch oluşturuldu (işlemci başına ~40.0 coin)
+2025-04-01 06:37:37 - CoinScanner - INFO - ⏱️  Paralel işlemler 14.02 saniyede tamamlandı (işlemci başına ~1.40s)
+2025-04-01 06:37:37 - CoinScanner - INFO - ⏱️  Paralel işlemler 14.02 saniyede tamamlandı (işlemci başına ~1.40s)
+2025-04-01 06:37:37 - CoinScanner - INFO - ⏱️  Paralel işlemler 14.02 saniyede tamamlandı (işlemci başına ~1.40s)
+2025-04-01 06:37:37 - CoinScanner - INFO - ⏱️  Paralel işlemler 14.02 saniyede tamamlandı (işlemci başına ~1.40s)
+2025-04-01 06:37:38 - CoinScanner - INFO - 
+📊 TARAMA İSTATİSTİKLERİ:
+2025-04-01 06:37:38 - CoinScanner - INFO - 
+📊 TARAMA İSTATİSTİKLERİ:
+2025-04-01 06:37:38 - CoinScanner - INFO - 
+📊 TARAMA İSTATİSTİKLERİ:
+2025-04-01 06:37:38 - CoinScanner - INFO - 
+📊 TARAMA İSTATİSTİKLERİ:
+2025-04-01 06:37:38 - CoinScanner - INFO - 📌 Toplam Coin: 3033
+2025-04-01 06:37:38 - CoinScanner - INFO - 📌 Toplam Coin: 3033
+2025-04-01 06:37:38 - CoinScanner - INFO - 📌 Toplam Coin: 3033
+2025-04-01 06:37:38 - CoinScanner - INFO - 📌 Toplam Coin: 3033
+2025-04-01 06:37:38 - CoinScanner - INFO - ✅ Geçerli USDT Çiftleri: 507
+2025-04-01 06:37:38 - CoinScanner - INFO - ✅ Geçerli USDT Çiftleri: 507
+2025-04-01 06:37:38 - CoinScanner - INFO - ✅ Geçerli USDT Çiftleri: 507
+2025-04-01 06:37:38 - CoinScanner - INFO - ✅ Geçerli USDT Çiftleri: 507
+2025-04-01 06:37:38 - CoinScanner - INFO - 💰 Fiyat Filtresi: 107
+2025-04-01 06:37:38 - CoinScanner - INFO - 💰 Fiyat Filtresi: 107
+2025-04-01 06:37:38 - CoinScanner - INFO - 💰 Fiyat Filtresi: 107
+2025-04-01 06:37:38 - CoinScanner - INFO - 💰 Fiyat Filtresi: 107
+2025-04-01 06:37:38 - CoinScanner - INFO - 📊 Hacim Filtresi: 0
+2025-04-01 06:37:38 - CoinScanner - INFO - 📊 Hacim Filtresi: 0
+2025-04-01 06:37:38 - CoinScanner - INFO - 📊 Hacim Filtresi: 0
+2025-04-01 06:37:38 - CoinScanner - INFO - 📊 Hacim Filtresi: 0
+2025-04-01 06:37:38 - CoinScanner - INFO - ✨ Başarılı Analiz: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - ✨ Başarılı Analiz: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - ✨ Başarılı Analiz: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - ✨ Başarılı Analiz: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - ❌ Başarısız Analiz: 171
+2025-04-01 06:37:38 - CoinScanner - INFO - ❌ Başarısız Analiz: 171
+2025-04-01 06:37:38 - CoinScanner - INFO - ❌ Başarısız Analiz: 171
+2025-04-01 06:37:38 - CoinScanner - INFO - ❌ Başarısız Analiz: 171
+2025-04-01 06:37:38 - CoinScanner - INFO - ⏱️ Toplam Süre: 14.61 saniye (10 işlemci ile)
+2025-04-01 06:37:38 - CoinScanner - INFO - ⏱️ Toplam Süre: 14.61 saniye (10 işlemci ile)
+2025-04-01 06:37:38 - CoinScanner - INFO - ⏱️ Toplam Süre: 14.61 saniye (10 işlemci ile)
+2025-04-01 06:37:38 - CoinScanner - INFO - ⏱️ Toplam Süre: 14.61 saniye (10 işlemci ile)
+2025-04-01 06:37:38 - CoinScanner - INFO - 🎯 Bulunan Fırsat Sayısı: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - 🎯 Bulunan Fırsat Sayısı: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - 🎯 Bulunan Fırsat Sayısı: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - 🎯 Bulunan Fırsat Sayısı: 229
+2025-04-01 06:37:38 - CoinScanner - INFO - Teknik analiz 20.62 saniyede tamamlandı, 10 fırsat bulundu
+2025-04-01 06:37:38 - CoinScanner - INFO - Teknik analiz 20.62 saniyede tamamlandı, 10 fırsat bulundu
+2025-04-01 06:37:38 - CoinScanner - INFO - Teknik analiz 20.62 saniyede tamamlandı, 10 fırsat bulundu
+2025-04-01 06:37:38 - CoinScanner - INFO - Teknik analiz 20.62 saniyede tamamlandı, 10 fırsat bulundu
+2025-04-01 06:37:38 - CoinScanner - INFO - AI ile zenginleştirme başlatılıyor...
+2025-04-01 06:37:38 - CoinScanner - INFO - AI ile zenginleştirme başlatılıyor...
+2025-04-01 06:37:38 - CoinScanner - INFO - AI ile zenginleştirme başlatılıyor...
+2025-04-01 06:37:38 - CoinScanner - INFO - AI ile zenginleştirme başlatılıyor...
+2025-04-01 06:37:38 - CoinScanner - INFO - Fırsatlar AI analizi ile zenginleştiriliyor
+2025-04-01 06:37:38 - CoinScanner - INFO - Fırsatlar AI analizi ile zenginleştiriliyor
+2025-04-01 06:37:38 - CoinScanner - INFO - Fırsatlar AI analizi ile zenginleştiriliyor
+2025-04-01 06:37:38 - CoinScanner - INFO - Fırsatlar AI analizi ile zenginleştiriliyor
+2025-04-01 06:38:04 - CoinScanner - INFO - AI analizi tamamlandı, 10 fırsat işlendi
+2025-04-01 06:38:04 - CoinScanner - INFO - AI analizi tamamlandı, 10 fırsat işlendi
+2025-04-01 06:38:04 - CoinScanner - INFO - AI analizi tamamlandı, 10 fırsat işlendi
+2025-04-01 06:38:04 - CoinScanner - INFO - AI analizi tamamlandı, 10 fırsat işlendi
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+📊 PERFORMANS ÖZETİ:
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+📊 PERFORMANS ÖZETİ:
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+📊 PERFORMANS ÖZETİ:
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+📊 PERFORMANS ÖZETİ:
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏱️ Teknik analiz süresi: 20.62 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏱️ Teknik analiz süresi: 20.62 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏱️ Teknik analiz süresi: 20.62 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏱️ Teknik analiz süresi: 20.62 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 🤖 AI analiz süresi: 26.22 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 🤖 AI analiz süresi: 26.22 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 🤖 AI analiz süresi: 26.22 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 🤖 AI analiz süresi: 26.22 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏰️ Toplam süre: 46.84 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏰️ Toplam süre: 46.84 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏰️ Toplam süre: 46.84 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - ⏰️ Toplam süre: 46.84 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 🚀 Hızlanma oranı: 12.95x (10 işlemci ile)
+2025-04-01 06:38:04 - CoinScanner - INFO - 🚀 Hızlanma oranı: 12.95x (10 işlemci ile)
+2025-04-01 06:38:04 - CoinScanner - INFO - 🚀 Hızlanma oranı: 12.95x (10 işlemci ile)
+2025-04-01 06:38:04 - CoinScanner - INFO - 🚀 Hızlanma oranı: 12.95x (10 işlemci ile)
+2025-04-01 06:38:04 - CoinScanner - INFO - 💡 İşlemci başına: 2.06 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 💡 İşlemci başına: 2.06 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 💡 İşlemci başına: 2.06 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 💡 İşlemci başına: 2.06 saniye
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====
+
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====
+
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====
+
+2025-04-01 06:38:04 - CoinScanner - INFO - 
+==== 📊 ÇOKLU İŞLEMCİ TARAMA TAMAMLANDI ====
+
